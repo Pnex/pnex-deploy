@@ -51,7 +51,9 @@ x-pnex-env: &pnex-env
   PNEX_PLATFORM_ADMIN_EMAILS: ${PNEX_PLATFORM_ADMIN_EMAILS:?run install.sh}
   PNEX_DEPLOYMENT_MODE: ${PNEX_DEPLOYMENT_MODE:-self_hosted}
   PNEX_DEFAULT_RETENTION_DAYS: ${PNEX_DEFAULT_RETENTION_DAYS:-30}
-  PNEX_DEFAULT_ORG_TIER: ${PNEX_DEFAULT_ORG_TIER:-Free}
+  # Self-hosted = no subscription limits: no tier is seeded, so orgs get
+  # none and no device/build/telemetry quota applies. Tiers are a SaaS
+  # concept (PNEX_DEPLOYMENT_MODE=saas).
   # Root CA pinned by wss firmware builds and served on /api/v1/meta/ca
   # (local mode only). Written by the `pki` one-shot service.
   PNEX_CA_CERT_FILE: /pki/device-ca.pem

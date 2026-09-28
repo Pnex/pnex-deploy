@@ -77,6 +77,11 @@ certificates) and Docker volumes for the data. `pnexctl` goes to
 All containers restart automatically (`unless-stopped`). See
 [Logs](#logs) for how logging is kept small.
 
+**No usage limits.** A self-hosted install has no subscription tiers: no
+cap on devices, firmware builds or telemetry volume. Sign-in goes through
+the browser login page only (authorization code + PKCE); the OIDC client
+does not accept the password grant.
+
 ### Ports
 
 | Port | Exposed to | Purpose |
@@ -110,7 +115,7 @@ what changed. Database migrations run when `pnex-server` starts.
 
 **Customising**: lines added at the end of `/opt/pnex/.env`, below the
 `user overrides` marker, survive re-runs (e.g. `O2_MEM_LIMIT='2g'`,
-`PNEX_DEFAULT_RETENTION_DAYS='90'`, `PNEX_DEFAULT_ORG_TIER='Pro'`). Apply with
+`PNEX_DEFAULT_RETENTION_DAYS='90'`). Apply with
 `sudo pnexctl start`.
 
 ### Logs

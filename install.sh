@@ -779,15 +779,19 @@ sync_oidc_client() {
     new=$(jq --arg o "$origin" '
         .redirect_uris = ((.redirect_uris // []) + [$o + "/auth/callback", $o + "/api/v1/oauth2/native"] | unique)
         | .post_logout_redirect_uris = ((.post_logout_redirect_uris // []) + [$o + "/"] | unique)
-        | .allowed_origins = ((.allowed_origins // []) + [$o] | unique)' <<<"$json")
-    local norm='.redirect_uris |= sort | .post_logout_redirect_uris |= sort | .allowed_origins |= sort'
+        | .allowed_origins = ((.allowed_origins // []) + [$o] | unique)
+        | .flows_enabled = ((.flows_enabled // []) - ["password"])' <<<"$json")
+    # The password grant (credentials posted straight to /token, bypassing
+    # the login page and its MFA) is never enabled in production; installs
+    # made before it was dropped from the bootstrap lose it here.
+    local norm='.redirect_uris |= sort | .post_logout_redirect_uris |= sort | .allowed_origins |= sort | .flows_enabled |= sort'
     if [[ "$(jq -S "$norm" <<<"$json")" == "$(jq -S "$norm" <<<"$new")" ]]; then
-        ok "OIDC client pnex already knows $origin"
+        ok "OIDC client pnex already up to date for $origin"
         return
     fi
     code=$(edge_curl -o /dev/null -w '%{http_code}' -X PUT -H "$auth" -H 'Content-Type: application/json' \
         -d "$new" "$base/clients/pnex") || true
-    if [[ $code == 2* ]]; then ok "OIDC client pnex updated for $origin"; else warn "OIDC client update failed (HTTP $code)"; fi
+    if [[ $code == 2* ]]; then ok "OIDC client pnex updated for $origin (flows: $(jq -r '.flows_enabled | join(", ")' <<<"$new"))"; else warn "OIDC client update failed (HTTP $code)"; fi
 }
 
 apply_branding() {
