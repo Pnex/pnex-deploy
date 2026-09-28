@@ -26,6 +26,9 @@ pnexctl — manage the PNeX stack (install dir: $PNEX_HOME, default /opt/pnex)
   uninstall [--purge] [--yes]
                             Remove the containers. --purge also deletes ALL data
                             (volumes, $PNEX_HOME, pnexctl).
+  log-level [LEVEL]         Show or set the log verbosity of PNeX, Rauthy,
+                            OpenObserve and RustFS: error (default), warn, info,
+                            debug, trace. Kept across upgrades.
   ca [path|cat]             Local root CA: its path (default) or its PEM
   trust-help                How to trust the CA on each client OS
 EOF
@@ -194,6 +197,37 @@ cmd_uninstall() {
     fi
 }
 
+OVERRIDE_MARKER="# ---- user overrides below this line are kept on re-run ----"
+
+cmd_log_level() {
+    check_install
+    local level=${1:-}
+    if [[ -z $level ]]; then
+        [[ -r $PNEX_HOME/.env ]] || die "run as root (sudo pnexctl log-level)"
+        printf '%s\n' "$(env_get LOG_LEVEL)"
+        return
+    fi
+    need_root log-level
+    case $level in
+        error | warn | info | debug | trace) ;;
+        *) die "unknown level '$level' (error, warn, info, debug, trace)" ;;
+    esac
+    local envf=$PNEX_HOME/.env tmp
+    tmp=$(mktemp)
+    # Stored as a user override (below the marker) so install.sh re-runs
+    # and upgrades keep it; any previous override is replaced.
+    awk -v m="$OVERRIDE_MARKER" '
+        $0 == m { found = 1; print; next }
+        found && /^LOG_LEVEL=/ { next }
+        { print }
+        END { if (!found) print m }' "$envf" >"$tmp"
+    printf "LOG_LEVEL='%s'\n" "$level" >>"$tmp"
+    cat "$tmp" >"$envf" && rm -f "$tmp"
+    # Recreates only the services whose environment changed.
+    compose up -d
+    echo "Log level: $level"
+}
+
 cmd_ca() {
     local ca=$PNEX_HOME/state/pki/ca.pem
     [[ -s $ca ]] || die "no local CA ($ca) — cloud mode uses Let's Encrypt"
@@ -242,6 +276,7 @@ main() {
         upgrade) cmd_upgrade "$@" ;;
         backup) cmd_backup "$@" ;;
         uninstall) cmd_uninstall "$@" ;;
+        log-level) cmd_log_level "$@" ;;
         ca) cmd_ca "$@" ;;
         trust-help) cmd_trust_help ;;
         help | -h | --help) usage ;;

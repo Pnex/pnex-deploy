@@ -15,13 +15,20 @@
 name: pnex
 
 x-logging: &logging
-  # Bounded logs: protects the SD card and the disk.
-  driver: json-file
+  # Bounded logs: protects the SD card and the disk. The `local` driver
+  # compresses rotated files (`docker logs` works as usual). The cap applies
+  # PER CONTAINER; sizes come from the install profile (raspi: 20m x 3,
+  # server: 50m x 5).
+  driver: local
   options:
-    max-size: "10m"
-    max-file: "3"
+    max-size: ${LOG_MAX_SIZE:-20m}
+    max-file: ${LOG_MAX_FILE:-3}
 
 x-pnex-env: &pnex-env
+  # Log verbosity of pnex-server, the flow runtime and the worker (takes
+  # precedence over the loco config). Default `error`: only failures reach
+  # the logs. Change it with `pnexctl log-level info|debug|...`.
+  RUST_LOG: ${LOG_LEVEL:-error}
   DATABASE_URL: postgres://pnex:${POSTGRES_PASSWORD:?run install.sh}@postgres:5432/pnex
   RAUTHY_URL: http://rauthy:8080
   RAUTHY_ISSUER_URL: https://${PNEX_PUBLIC_HOST:?run install.sh}
@@ -78,6 +85,13 @@ services:
       # Fewer, larger checkpoints: less write amplification on SD cards.
       - -c
       - checkpoint_timeout=15min
+      # Quiet server log: errors only, no checkpoint/autovacuum chatter.
+      - -c
+      - log_min_messages=${PG_LOG_MIN_MESSAGES:-error}
+      - -c
+      - log_checkpoints=off
+      - -c
+      - log_autovacuum_min_duration=-1
       - -c
       - wal_compression=on
     volumes:
@@ -98,7 +112,7 @@ services:
     image: valkey/valkey:9-alpine
     restart: unless-stopped
     logging: *logging
-    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${VALKEY_MAXMEMORY:-128mb}", "--maxmemory-policy", "allkeys-lru"]
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${VALKEY_MAXMEMORY:-128mb}", "--maxmemory-policy", "allkeys-lru", "--loglevel", "warning"]
     networks: [pnex]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
@@ -115,6 +129,9 @@ services:
     logging: *logging
     environment:
       PUB_URL: ${PNEX_PUBLIC_HOST:?run install.sh}
+      LOG_LEVEL: ${LOG_LEVEL:-error}
+      # The embedded database (hiqlite/openraft) has its own level.
+      LOG_LEVEL_DATABASE: ${LOG_LEVEL:-error}
       DEV_MODE: "false"
       LISTEN_SCHEME: http
       PROXY_MODE: "true"
@@ -151,6 +168,7 @@ services:
       ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ROOT_EMAIL:-root@pnex.local}
       ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD:?run install.sh}
       ZO_DATA_DIR: /data
+      RUST_LOG: ${LOG_LEVEL:-error}
       ZO_TELEMETRY: "false"
       ZO_USAGE_REPORTING_ENABLED: "false"
       # Sizes in MB.
@@ -173,6 +191,8 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+      RUST_LOG: ${LOG_LEVEL:-error}
+      RUSTFS_OBS_LOGGER_LEVEL: ${LOG_LEVEL:-error}
     volumes:
       - rustfsdata:/data
     networks: [pnex]

@@ -18,6 +18,11 @@ map $host $pnex_alias {
 
 resolver 127.0.0.11 valid=10s ipv6=off;
 
+# Quiet by default (SD card): no access log, errors only. Every request of
+# every device would otherwise be logged.
+access_log off;
+error_log /dev/stderr error;
+
 # Port 80: ACME HTTP-01 challenges (cloud mode), container health probe,
 # everything else redirected to https.
 server {

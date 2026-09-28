@@ -74,8 +74,8 @@ certificates) and Docker volumes for the data. `pnexctl` goes to
 | rustfs (+ rustfs-init) | `rustfs/rustfs:1.0.0-rc.2`, `amazon/aws-cli` | `--storage s3` only. |
 | certbot | `certbot/certbot:v4.2.0` | `--tls cloud` only. |
 
-All containers restart automatically (`unless-stopped`) and their logs are
-capped (3 × 10 MB each).
+All containers restart automatically (`unless-stopped`). See
+[Logs](#logs) for how logging is kept small.
 
 ### Ports
 
@@ -97,6 +97,7 @@ sudo pnexctl upgrade           # latest recipe + the image tag in its VERSION fi
 sudo pnexctl upgrade dirty-1a2b3c4   # a specific image tag
 sudo pnexctl backup            # pg_dump + .env + CA into /var/backups/pnex/
 sudo pnexctl backup --volumes  # also archive every data volume (brief downtime)
+sudo pnexctl log-level info    # more verbose logs while diagnosing (default: error)
 pnexctl ca cat                 # print the local root CA
 pnexctl trust-help             # how to trust it on Windows/macOS/Android/iOS/Linux
 sudo pnexctl uninstall         # remove containers, keep data
@@ -111,6 +112,25 @@ what changed. Database migrations run when `pnex-server` starts.
 `user overrides` marker, survive re-runs (e.g. `O2_MEM_LIMIT='2g'`,
 `PNEX_DEFAULT_RETENTION_DAYS='90'`, `PNEX_DEFAULT_ORG_TIER='Pro'`). Apply with
 `sudo pnexctl start`.
+
+### Logs
+
+Logging is kept small on purpose, to limit SD card wear:
+
+- **Errors only by default.** PNeX (server, flow runtime, worker), Rauthy,
+  OpenObserve and RustFS run at `error`. Postgres logs errors only (no
+  checkpoint or autovacuum messages), Valkey logs warnings, and nginx logs
+  errors with no access log.
+- **Diagnosing:** `sudo pnexctl log-level info` (or `debug`) raises the level
+  for PNeX, Rauthy, OpenObserve and RustFS and recreates those containers.
+  Go back with `sudo pnexctl log-level error`. The setting survives upgrades.
+- **Bounded size.** Docker's `local` driver compresses rotated files. The cap
+  is **per container**: 20 MB × 3 files on `raspi`, 50 MB × 5 on `server`
+  (`LOG_MAX_SIZE` / `LOG_MAX_FILE` overrides in `.env`). The same limits are
+  set as Docker's defaults in `/etc/docker/daemon.json` (merged, never
+  overwritten; an existing `log-driver` is left alone).
+- **System journal.** On `raspi`, journald is capped at 100 MB
+  (`/etc/systemd/journald.conf.d/pnex.conf`).
 
 **Backups**: `config.tar.gz` contains the local CA **private key** — firmware
 flashed on your devices pins that CA, so losing it means re-flashing every
@@ -168,10 +188,12 @@ has no Web Serial). On Ubuntu run `client/setup-ubuntu.sh` once (above); it:
   above), or you browse by a name that is not in the certificate (the
   certificate covers the domain, `<hostname>.local`, `localhost` and every LAN
   IP of the server at install time; re-run the installer after an IP change).
-- **SD card wear** — PNeX limits writes (no Valkey persistence, capped logs,
-  fewer Postgres checkpoints), but telemetry is written continuously. Prefer
-  booting the Pi from an SSD; at least use a high-endurance card and take
-  regular `pnexctl backup`s.
+- **SD card wear** — PNeX limits writes (no Valkey persistence, error-only
+  and capped logs, fewer Postgres checkpoints), but the database and the
+  telemetry are written continuously: these, not the logs, wear the card.
+  The installer warns when Docker's data sits on the SD card. Prefer booting
+  the Pi from a USB SSD. At the very least, use a high-endurance card and
+  take regular `pnexctl backup`s.
 - **A container crash-loops on a Raspberry Pi 5 with "Unsupported system page
   size"** — the Pi 5 kernel uses 16 KB pages; add `kernel=kernel8.img` to
   `/boot/firmware/config.txt` and reboot.

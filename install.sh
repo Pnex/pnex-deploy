@@ -397,6 +397,56 @@ install_docker() {
     ok "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null), compose $v"
 }
 
+# Host-wide log hygiene: Docker defaults for containers started outside
+# the compose project, journald cap on the raspi profile, SD card warning.
+configure_host_logging() {
+    step "Logs"
+    local size=20m files=3
+    [[ $PROFILE == server ]] && { size=50m; files=5; }
+    if ((DRY_RUN)); then
+        info "dry-run: would set Docker default log driver 'local' ($size x $files) and cap journald"
+        return
+    fi
+    # Docker daemon defaults: merged into an existing daemon.json, never
+    # overwritten; an admin's own log-driver choice is left alone.
+    local daemon=/etc/docker/daemon.json current merged
+    mkdir -p /etc/docker
+    current=$(cat "$daemon" 2>/dev/null || true)
+    [[ -n $current ]] || current='{}'
+    if ! jq -e . >/dev/null 2>&1 <<<"$current"; then
+        warn "$daemon is not valid JSON: Docker log defaults not changed"
+    elif jq -e 'has("log-driver")' >/dev/null <<<"$current"; then
+        info "Docker log driver already set in $daemon ($(jq -r '."log-driver"' <<<"$current")), left unchanged"
+    else
+        merged=$(jq --arg s "$size" --arg f "$files" \
+            '. + {"log-driver": "local", "log-opts": {"max-size": $s, "max-file": $f}}' <<<"$current")
+        printf '%s\n' "$merged" >"$daemon"
+        # Applies to containers created afterwards; the stack is (re)created
+        # right after this step.
+        systemctl restart docker
+        ok "Docker default log driver: local ($size x $files per container)"
+    fi
+    if [[ $PROFILE == raspi ]] && [[ -d /etc/systemd ]]; then
+        local jconf=/etc/systemd/journald.conf.d/pnex.conf
+        local want=$'# Written by PNeX install.sh (raspi profile): bounded system journal.\n[Journal]\nSystemMaxUse=100M\nRuntimeMaxUse=50M\n'
+        if [[ $(cat "$jconf" 2>/dev/null) != "${want%$'\n'}" ]]; then
+            mkdir -p "$(dirname "$jconf")"
+            printf '%s' "$want" >"$jconf"
+            systemctl restart systemd-journald 2>/dev/null || true
+        fi
+        ok "journald capped at 100M"
+    fi
+    # Postgres and OpenObserve write far more than logs: on a Pi, Docker's
+    # data should live on an SSD, not on the SD card.
+    local root src
+    root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
+    src=$(df --output=source "$root" 2>/dev/null | tail -1)
+    if [[ $src == /dev/mmcblk* ]]; then
+        warn "Docker data ($root) is on the SD card ($src): database and telemetry writes will wear it out."
+        warn "Recommended: move $root to a USB SSD (see README, 'Storage on a Raspberry Pi')."
+    fi
+}
+
 # Directory holding this script when it is a real file (not piped).
 script_dir() {
     local src=${BASH_SOURCE[0]:-}
@@ -480,6 +530,9 @@ ZO_MAX_FILE_SIZE_IN_MEMORY='32'
 ZO_DISK_CACHE_MAX_SIZE='512'
 ZO_QUERY_THREAD_NUM='2'
 PNEX_STITCH_MAX_CONCURRENT='1'
+LOG_LEVEL='error'
+LOG_MAX_SIZE='20m'
+LOG_MAX_FILE='3'
 EOF
     else
         cat <<'EOF'
@@ -498,6 +551,9 @@ ZO_MAX_FILE_SIZE_IN_MEMORY='128'
 ZO_DISK_CACHE_MAX_SIZE='2048'
 ZO_QUERY_THREAD_NUM='0'
 PNEX_STITCH_MAX_CONCURRENT='2'
+LOG_LEVEL='error'
+LOG_MAX_SIZE='50m'
+LOG_MAX_FILE='5'
 EOF
     fi
 }
@@ -801,6 +857,7 @@ main() {
     resolve_settings
     install_prerequisites
     install_docker
+    configure_host_logging
     fetch_recipe
     resolve_tag
     write_env
