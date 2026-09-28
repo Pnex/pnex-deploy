@@ -1,0 +1,339 @@
+# PNeX production stack — single host (Raspberry Pi 4/5 or any Debian/Ubuntu
+# box, amd64 or arm64).
+#
+# Do not run this file by hand on a fresh machine: `install.sh` generates
+# the `.env` it reads (secrets, domain, profile) and the Rauthy / PKI state
+# under ./state. Day-2 operations go through `pnexctl`.
+#
+# Optional services are enabled through COMPOSE_PROFILES (set in .env):
+#   s3     RustFS (S3-compatible object store) + one-shot bucket creation
+#   cloud  certbot (Let's Encrypt, HTTP-01) instead of the local CA
+#
+# Only nginx publishes ports (80/443). Everything else stays on the
+# internal `pnex` network.
+
+name: pnex
+
+x-logging: &logging
+  # Bounded logs: protects the SD card and the disk.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-pnex-env: &pnex-env
+  DATABASE_URL: postgres://pnex:${POSTGRES_PASSWORD:?run install.sh}@postgres:5432/pnex
+  RAUTHY_URL: http://rauthy:8080
+  RAUTHY_ISSUER_URL: https://${PNEX_PUBLIC_HOST:?run install.sh}
+  OPENOBSERVE_URL: http://openobserve:5080
+  OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL:-root@pnex.local}
+  OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD:?run install.sh}
+  VALKEY_URL: redis://valkey:6379
+  PNEX_NOTIFY_INTERNAL_TOKEN: ${PNEX_NOTIFY_INTERNAL_TOKEN:?run install.sh}
+  PNEX_FLOW_RUNTIME_TOKEN: ${PNEX_FLOW_RUNTIME_TOKEN:?run install.sh}
+  # Firmware artefacts: `db` (Postgres) or `s3` (RustFS). Media: `fs`
+  # (the /data volume) or `s3`. Chosen once at install time.
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-db}
+  MEDIA_BACKEND: ${MEDIA_BACKEND:-fs}
+  PNEX_S3_ENDPOINT: ${PNEX_S3_ENDPOINT:-}
+  PNEX_S3_BUCKET: ${PNEX_S3_BUCKET:-}
+  PNEX_S3_REGION: ${PNEX_S3_REGION:-}
+  PNEX_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
+  PNEX_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+  PNEX_S3_PATH_STYLE: ${PNEX_S3_PATH_STYLE:-true}
+  PNEX_PLATFORM_ADMIN_EMAILS: ${PNEX_PLATFORM_ADMIN_EMAILS:?run install.sh}
+  PNEX_DEPLOYMENT_MODE: ${PNEX_DEPLOYMENT_MODE:-self_hosted}
+  PNEX_DEFAULT_RETENTION_DAYS: ${PNEX_DEFAULT_RETENTION_DAYS:-30}
+  PNEX_DEFAULT_ORG_TIER: ${PNEX_DEFAULT_ORG_TIER:-Free}
+  # Root CA pinned by wss firmware builds and served on /api/v1/meta/ca
+  # (local mode only). Written by the `pki` one-shot service.
+  PNEX_CA_CERT_FILE: /pki/device-ca.pem
+  PNEX_EDGE_MODE: ${PNEX_TLS_MODE:-local}
+  DB_MAX_CONNECTIONS: ${PNEX_DB_MAX_CONNECTIONS:-10}
+  PNEX_STITCH_MAX_CONCURRENT: ${PNEX_STITCH_MAX_CONCURRENT:-2}
+  PNEX_STITCH_OUT_WIDTH: ${PNEX_STITCH_OUT_WIDTH:-4096}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: pnex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run install.sh}
+      POSTGRES_DB: pnex
+    # Memory knobs come from the install profile (raspi | server).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-4MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-100}
+      # Fewer, larger checkpoints: less write amplification on SD cards.
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - wal_compression=on
+    volumes:
+      # PG 18+: mount /var/lib/postgresql (data lives in a per-major-version
+      # subdirectory, pg_upgrade friendly).
+      - pgdata:/var/lib/postgresql
+    networks: [pnex]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pnex -d pnex"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Last-point cache for the pnex-device-read flow node. Pure cache: no
+  # persistence at all (zero disk writes), OpenObserve stays the source of
+  # truth.
+  valkey:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    logging: *logging
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${VALKEY_MAXMEMORY:-128mb}", "--maxmemory-policy", "allkeys-lru"]
+    networks: [pnex]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # OIDC identity provider. Plain HTTP inside the network; nginx exposes it
+  # as https://<domain>/auth/v1/. Bootstrap files (admin, `pnex` client, API
+  # key) are read on the very first start only (empty database).
+  rauthy:
+    image: ghcr.io/sebadob/rauthy:0.36.2
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      PUB_URL: ${PNEX_PUBLIC_HOST:?run install.sh}
+      DEV_MODE: "false"
+      LISTEN_SCHEME: http
+      PROXY_MODE: "true"
+      TRUSTED_PROXIES: "127.0.0.1/32\n${PNEX_NET_SUBNET:-172.30.66.0/24}"
+      COOKIE_MODE: host
+      HQL_NODE_ID: 1
+      # WebAuthn forbids IP rp ids: install.sh sets localhost when the
+      # domain is an IP (passkeys unavailable, passwords fine).
+      RP_ID: ${PNEX_RP_ID:?run install.sh}
+      RP_ORIGIN: ${PNEX_RP_ORIGIN:?run install.sh}
+      BOOTSTRAP_ADMIN_EMAIL: ${PNEX_ADMIN_EMAIL:?run install.sh}
+      BOOTSTRAP_ADMIN_PASSWORD_PLAIN: ${PNEX_ADMIN_PASSWORD:?run install.sh}
+    # Optional SMTP (account activation / password reset mails), written
+    # by install.sh from --smtp-* flags. Empty file = no mail at all and
+    # self-registration disabled (an empty SMTP_FROM makes Rauthy panic, so
+    # the variables must be absent, not empty).
+    env_file:
+      - path: ./state/rauthy/smtp.env
+        required: false
+    volumes:
+      - ./state/rauthy/config.toml:/app/config.toml:ro
+      - ./state/rauthy/bootstrap:/app/bootstrap:ro
+      - rauthydata:/app/data
+    networks: [pnex]
+
+  # Telemetry store (one OpenObserve org per PNeX org, provisioned by the
+  # backend). Memory caps come from the install profile.
+  openobserve:
+    image: openobserve/openobserve:v1.0.0
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: ${O2_MEM_LIMIT:-4g}
+    environment:
+      ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ROOT_EMAIL:-root@pnex.local}
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD:?run install.sh}
+      ZO_DATA_DIR: /data
+      ZO_TELEMETRY: "false"
+      ZO_USAGE_REPORTING_ENABLED: "false"
+      # Sizes in MB.
+      ZO_MEMORY_CACHE_MAX_SIZE: ${ZO_MEMORY_CACHE_MAX_SIZE:-1024}
+      ZO_MEMORY_CACHE_DATAFUSION_MAX_SIZE: ${ZO_MEMORY_CACHE_DATAFUSION_MAX_SIZE:-1024}
+      ZO_MEM_TABLE_MAX_SIZE: ${ZO_MEM_TABLE_MAX_SIZE:-512}
+      ZO_MAX_FILE_SIZE_IN_MEMORY: ${ZO_MAX_FILE_SIZE_IN_MEMORY:-128}
+      ZO_DISK_CACHE_MAX_SIZE: ${ZO_DISK_CACHE_MAX_SIZE:-2048}
+      ZO_QUERY_THREAD_NUM: ${ZO_QUERY_THREAD_NUM:-0}
+    volumes:
+      - o2data:/data
+    networks: [pnex]
+
+  # S3-compatible object store (profile `s3`): firmware artefacts + media.
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.2
+    profiles: ["s3"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+    volumes:
+      - rustfsdata:/data
+    networks: [pnex]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:9000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: creates the bucket (idempotent). AWS CLI rather than mc: no
+  # MinIO product anywhere in the stack (license).
+  rustfs-init:
+    image: amazon/aws-cli:2.27.49
+    profiles: ["s3"]
+    restart: "no"
+    logging: *logging
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-}
+      AWS_DEFAULT_REGION: ${PNEX_S3_REGION:-us-east-1}
+      BUCKET: ${PNEX_S3_BUCKET:-pnex}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        until aws --endpoint-url http://rustfs:9000 s3 ls >/dev/null 2>&1; do
+          echo "rustfs not ready, retrying..."; sleep 2
+        done
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket "$$BUCKET" 2>/dev/null \
+          || aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket "$$BUCKET"
+        echo "bucket $$BUCKET ready"
+    networks: [pnex]
+
+  # One-shot: local CA (created once) + leaf for the domain, or a
+  # placeholder certificate in cloud mode until certbot's first issuance.
+  pki:
+    image: alpine:3.22
+    restart: "no"
+    logging: *logging
+    environment:
+      PNEX_DOMAIN: ${PNEX_DOMAIN:?run install.sh}
+      PNEX_EDGE_MODE: ${PNEX_TLS_MODE:-local}
+      PNEX_EXTRA_SANS: ${PNEX_EXTRA_SANS:-}
+    volumes:
+      - ./config/pki/pki-init.sh:/pki-init.sh:ro
+      - ./state/pki:/pki
+    entrypoint: ["sh", "-c", "apk add --no-cache openssl >/dev/null && sh /pki-init.sh"]
+    networks: [pnex]
+
+  # The single public entry point: terminates ALL TLS (browsers, apps,
+  # devices). nginx/OpenSSL honours the max_fragment_length extension the
+  # ESP8266 needs (2 KB BearSSL receive buffer).
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      pki:
+        condition: service_completed_successfully
+    environment:
+      PNEX_DOMAIN: ${PNEX_DOMAIN:?run install.sh}
+      PNEX_PUBLIC_HOST: ${PNEX_PUBLIC_HOST:?run install.sh}
+      PNEX_DOMAIN_ALIAS: ${PNEX_DOMAIN_ALIAS:-}
+      # Only our variables are substituted (keeps $host, $http_upgrade...).
+      NGINX_ENVSUBST_FILTER: "^PNEX_"
+    ports:
+      - "${PNEX_HTTP_PORT:-80}:80"
+      - "${PNEX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./config/nginx/templates:/etc/nginx/templates:ro
+      - ./config/nginx/40-cert-watch.sh:/docker-entrypoint.d/40-cert-watch.sh:ro
+      - ./state/pki:/pki:ro
+      - acme:/var/www/acme:ro
+    networks: [pnex]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Cloud mode only (profile `cloud`): Let's Encrypt via HTTP-01 webroot.
+  certbot:
+    image: certbot/certbot:v4.2.0
+    profiles: ["cloud"]
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      - nginx
+    environment:
+      PNEX_DOMAIN: ${PNEX_DOMAIN:?run install.sh}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_STAGING: ${ACME_STAGING:-}
+    volumes:
+      - ./config/certbot/run.sh:/run.sh:ro
+      - ./state/pki:/pki
+      - acme:/var/www/acme
+      - letsencrypt:/etc/letsencrypt
+    entrypoint: ["sh", "/run.sh"]
+    networks: [pnex]
+
+  # HTTP API + websockets + flow runtime. Migrates the database at boot.
+  # Distroless image (no shell): health is checked through nginx.
+  pnex-server:
+    image: ${PNEX_IMAGE_REGISTRY:-docker.io/shanisma}/pnex-server-rs:${PNEX_TAG:?run install.sh}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      rauthy:
+        condition: service_started
+      openobserve:
+        condition: service_started
+      rustfs-init:
+        condition: service_completed_successfully
+        required: false
+    environment:
+      <<: *pnex-env
+    volumes:
+      - appdata:/data
+      - ./state/pki:/pki:ro
+    networks: [pnex]
+
+  # Queue worker: PlatformIO firmware builds + 360 stitching.
+  pnex-builder:
+    image: ${PNEX_IMAGE_REGISTRY:-docker.io/shanisma}/pnex-builder-rs:${PNEX_TAG:?run install.sh}
+    restart: unless-stopped
+    logging: *logging
+    command: ["start", "--worker"]
+    depends_on:
+      pnex-server:
+        condition: service_started
+    environment:
+      <<: *pnex-env
+      # pnex-server alone migrates the schema: two concurrent migrators
+      # collide on CREATE TYPE/TABLE.
+      PNEX_AUTO_MIGRATE: "false"
+    volumes:
+      # Shared with pnex-server: stitching reads/writes media on the fs
+      # backend.
+      - appdata:/data
+      - ./state/pki:/pki:ro
+    networks: [pnex]
+
+networks:
+  pnex:
+    ipam:
+      config:
+        # Fixed subnet: Rauthy trusts X-Forwarded-For only from it.
+        - subnet: ${PNEX_NET_SUBNET:-172.30.66.0/24}
+
+volumes:
+  pgdata:
+  rauthydata:
+  o2data:
+  appdata:
+  rustfsdata:
+  acme:
+  letsencrypt:

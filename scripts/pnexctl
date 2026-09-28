@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# pnexctl — day-2 operations for a PNeX install made by install.sh.
+set -euo pipefail
+
+PNEX_HOME="${PNEX_HOME:-/opt/pnex}"
+REPO_SLUG="${PNEX_REPO_SLUG:-Pnex/pnex-deploy}"
+
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    cat <<'EOF'
+pnexctl — manage the PNeX stack (install dir: $PNEX_HOME, default /opt/pnex)
+
+  status                    Containers, image tag and endpoint health
+  logs [SERVICE...] [-f]    Container logs (last 200 lines; -f to follow)
+  restart [SERVICE...]      Restart services (all when none given)
+  stop | start              Stop / start the whole stack (data kept)
+  upgrade [TAG] [--local] [-- INSTALL_FLAGS...]
+                            Fetch the latest recipe (ref from .env) and move to TAG
+                            (default: the recipe's VERSION). --local re-runs the
+                            installer already in the install dir (no download).
+  backup [--dir DIR] [--volumes]
+                            pg_dump + .env + PKI (CA key!) into DIR (default
+                            /var/backups/pnex). --volumes also archives every data
+                            volume (stops the stack for a moment).
+  uninstall [--purge] [--yes]
+                            Remove the containers. --purge also deletes ALL data
+                            (volumes, $PNEX_HOME, pnexctl).
+  ca [path|cat]             Local root CA: its path (default) or its PEM
+  trust-help                How to trust the CA on each client OS
+EOF
+}
+
+need_root() { [[ $EUID -eq 0 ]] || die "run as root (sudo pnexctl $*)"; }
+
+env_get() { # $1 = key — reads the install's .env (single-quoted values)
+    local line
+    line=$(grep -E "^$1=" "$PNEX_HOME/.env" 2>/dev/null | tail -1) || true
+    line=${line#*=}
+    line=${line#\'}
+    line=${line%\'}
+    printf '%s' "$line"
+}
+
+compose() { (cd "$PNEX_HOME" && docker compose "$@"); }
+
+check_install() {
+    [[ -f $PNEX_HOME/compose.yaml && -f $PNEX_HOME/.env ]] || die "no PNeX install in $PNEX_HOME"
+}
+
+public_host() { env_get PNEX_PUBLIC_HOST; }
+
+edge_curl() {
+    local domain port tls=()
+    domain=$(env_get PNEX_DOMAIN)
+    port=$(env_get PNEX_HTTPS_PORT)
+    if [[ $(env_get PNEX_TLS_MODE) == cloud ]]; then tls=(-k); else tls=(--cacert "$PNEX_HOME/state/pki/ca.pem"); fi
+    curl -sS --max-time 10 --resolve "$domain:${port:-443}:127.0.0.1" "${tls[@]}" "$@"
+}
+
+cmd_status() {
+    need_root status
+    check_install
+    local host code
+    host=$(public_host)
+    echo "PNeX $(env_get PNEX_TAG)  profile=$(env_get PNEX_PROFILE) storage=$(env_get PNEX_STORAGE) tls=$(env_get PNEX_TLS_MODE)"
+    echo "Origin: https://$host/"
+    echo
+    compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Image}}'
+    echo
+    code=$(edge_curl -o /dev/null -w '%{http_code}' "https://$host/auth/v1/.well-known/openid-configuration" 2>/dev/null || true)
+    echo "OIDC discovery : HTTP ${code:-unreachable}"
+    code=$(edge_curl -o /dev/null -w '%{http_code}' "https://$host/" 2>/dev/null || true)
+    echo "pnex-server    : HTTP ${code:-unreachable}"
+    if [[ $(env_get PNEX_TLS_MODE) == local && -f $PNEX_HOME/state/pki/current/fullchain.pem ]]; then
+        echo "TLS leaf       : $(openssl x509 -in "$PNEX_HOME/state/pki/current/fullchain.pem" -noout -enddate 2>/dev/null)"
+    fi
+    echo "Disk           : $(df -h "$PNEX_HOME" | awk 'NR == 2 {print $4 " free of " $2}')"
+}
+
+cmd_logs() {
+    need_root logs
+    check_install
+    local follow=() services=() a
+    for a in "$@"; do
+        case $a in
+            -f | --follow) follow=(-f) ;;
+            *) services+=("$a") ;;
+        esac
+    done
+    compose logs --tail 200 "${follow[@]}" "${services[@]}"
+}
+
+cmd_restart() { need_root restart; check_install; compose restart "$@"; }
+cmd_stop() { need_root stop; check_install; compose stop; }
+cmd_start() { need_root start; check_install; compose up -d; }
+
+cmd_upgrade() {
+    need_root upgrade
+    check_install
+    local tag="" local_run=0 extra=()
+    while (($#)); do
+        case $1 in
+            --local) local_run=1 ;;
+            --) shift; extra=("$@"); break ;;
+            -*) die "unknown upgrade flag '$1'" ;;
+            *) tag=$1 ;;
+        esac
+        shift
+    done
+    local args=(--non-interactive --home "$PNEX_HOME")
+    [[ -n $tag ]] && args+=(--tag "$tag")
+    args+=("${extra[@]}")
+    if ((local_run)); then
+        bash "$PNEX_HOME/install.sh" --source local "${args[@]}"
+    else
+        local ref
+        ref=$(env_get PNEX_REF)
+        ref=${ref:-main}
+        echo "Fetching installer $REPO_SLUG@$ref"
+        curl -fsSL "https://raw.githubusercontent.com/$REPO_SLUG/$ref/install.sh" |
+            bash -s -- --source remote --ref "$ref" "${args[@]}"
+    fi
+}
+
+cmd_backup() {
+    need_root backup
+    check_install
+    local dir=/var/backups/pnex with_volumes=0
+    while (($#)); do
+        case $1 in
+            --dir) dir=${2:?--dir needs a value}; shift ;;
+            --dir=*) dir=${1#*=} ;;
+            --volumes) with_volumes=1 ;;
+            *) die "unknown backup flag '$1'" ;;
+        esac
+        shift
+    done
+    local stamp out
+    stamp=$(date +%Y%m%d-%H%M%S)
+    out="$dir/pnex-$stamp"
+    mkdir -p "$out"
+    chmod 700 "$dir" "$out"
+    echo "Backup into $out"
+    compose exec -T postgres pg_dump -U pnex -d pnex -Fc >"$out/postgres.dump"
+    echo "  ✓ postgres.dump ($(du -h "$out/postgres.dump" | cut -f1))"
+    tar -C "$PNEX_HOME" -czf "$out/config.tar.gz" .env state
+    echo "  ✓ config.tar.gz (.env, local CA private key, Rauthy config — keep it secret)"
+    local vols v
+    vols=$(docker volume ls --format '{{.Name}}' | grep -E '^pnex_' || true)
+    if ((with_volumes)); then
+        echo "  • stopping the stack for a consistent volume copy"
+        compose stop >/dev/null
+        for v in $vols; do
+            docker run --rm -v "$v:/v:ro" -v "$out:/out" alpine:3.22 tar -C /v -czf "/out/$v.tar.gz" .
+            echo "  ✓ volume $v"
+        done
+        compose up -d >/dev/null
+        echo "  ✓ stack restarted"
+    else
+        echo "  • data volumes (not copied; use --volumes, or stop the stack and archive them):"
+        for v in $vols; do
+            echo "      $v  ($(docker volume inspect -f '{{.Mountpoint}}' "$v"))"
+        done
+    fi
+    echo "Restore Postgres: docker compose exec -T postgres pg_restore -U pnex -d pnex --clean < postgres.dump"
+}
+
+cmd_uninstall() {
+    need_root uninstall
+    local purge=0 yes=0
+    for a in "$@"; do
+        case $a in
+            --purge) purge=1 ;;
+            --yes | -y) yes=1 ;;
+            *) die "unknown uninstall flag '$a'" ;;
+        esac
+    done
+    check_install
+    if ((!yes)); then
+        local what="containers"
+        ((purge)) && what="containers, ALL DATA (database, telemetry, media, CA) and $PNEX_HOME"
+        read -r -p "Remove $what? Type 'yes': " answer </dev/tty
+        [[ $answer == yes ]] || die "aborted"
+    fi
+    if ((purge)); then
+        compose --profile s3 --profile cloud down -v --remove-orphans
+        rm -rf "${PNEX_HOME:?}"
+        rm -f /usr/local/bin/pnexctl
+        echo "PNeX removed, data purged. Docker itself is left installed."
+    else
+        compose --profile s3 --profile cloud down --remove-orphans
+        echo "Containers removed; data volumes and $PNEX_HOME kept (pnexctl start or install.sh to bring it back)."
+    fi
+}
+
+cmd_ca() {
+    local ca=$PNEX_HOME/state/pki/ca.pem
+    [[ -s $ca ]] || die "no local CA ($ca) — cloud mode uses Let's Encrypt"
+    case ${1:-path} in
+        path) echo "$ca" ;;
+        cat) cat "$ca" ;;
+        *) die "usage: pnexctl ca [path|cat]" ;;
+    esac
+}
+
+cmd_trust_help() {
+    local host
+    host=$(public_host 2>/dev/null || true)
+    host=${host:-<your-pnex-host>}
+    cat <<EOF
+Trust the PNeX local root CA once per client device.
+Download it from https://$host/api/v1/meta/ca (browser warning expected the
+first time), or copy it from this server: $(cmd_ca path 2>/dev/null || echo "$PNEX_HOME/state/pki/ca.pem")
+
+Ubuntu / Debian desktop (system store, Chrome/Chromium NSS, Firefox, USB serial setup):
+  curl -fsSL https://raw.githubusercontent.com/$REPO_SLUG/main/client/setup-ubuntu.sh | bash -s -- --server $host
+
+Windows:  double-click pnex-ca.crt -> Install Certificate -> Local Machine ->
+          "Trusted Root Certification Authorities". Restart the browser.
+          (PowerShell as admin: Import-Certificate -FilePath pnex-ca.crt -CertStoreLocation Cert:\\LocalMachine\\Root)
+macOS:    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain pnex-ca.crt
+          (or Keychain Access -> System -> import, then "Always Trust").
+Android:  Settings -> Security -> Encryption & credentials -> Install a certificate ->
+          CA certificate -> pick pnex-ca.crt. The PNeX app pins it on first connect.
+iOS:      open the .crt in Safari -> Settings -> Profile Downloaded -> Install, then
+          Settings -> General -> About -> Certificate Trust Settings -> enable it.
+Firefox:  uses its own store unless security.enterprise_roots.enabled is true:
+          Settings -> Privacy & Security -> Certificates -> View -> Authorities -> Import.
+EOF
+}
+
+main() {
+    local cmd=${1:-help}
+    (($#)) && shift
+    case $cmd in
+        status) cmd_status "$@" ;;
+        logs) cmd_logs "$@" ;;
+        restart) cmd_restart "$@" ;;
+        stop) cmd_stop ;;
+        start) cmd_start ;;
+        upgrade) cmd_upgrade "$@" ;;
+        backup) cmd_backup "$@" ;;
+        uninstall) cmd_uninstall "$@" ;;
+        ca) cmd_ca "$@" ;;
+        trust-help) cmd_trust_help ;;
+        help | -h | --help) usage ;;
+        *) usage; exit 1 ;;
+    esac
+}
+
+main "$@"

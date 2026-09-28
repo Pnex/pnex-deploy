@@ -1,0 +1,39 @@
+# Rauthy configuration — RENDERED by install.sh into state/rauthy/config.toml
+# (at-sign delimited placeholders are filled from /opt/pnex/.env). Edit the
+# template in the pnex-deploy repo, not the rendered file.
+# Environment variables set in compose.yaml override these values.
+# Reference: https://sebadob.github.io/rauthy/config/config.html
+
+[server]
+port_http = 8080
+# Plain HTTP inside the Docker network: nginx terminates TLS
+# (PROXY_MODE + TRUSTED_PROXIES are set in compose.yaml).
+scheme = "http"
+pub_url = '@PUBLIC_HOST@'
+
+[cluster]
+# Single hiqlite node, data in the `rauthydata` volume.
+node_id = 1
+data_dir = '/app/data'
+secret_raft = '@RAUTHY_SECRET_RAFT@'
+secret_api = '@RAUTHY_SECRET_API@'
+
+[encryption]
+# Generated once at install time. To rotate: add a new key to `keys`,
+# switch `key_active`, restart, then run the key migration from the admin UI.
+key_active = '@RAUTHY_ENC_KEY_ID@'
+keys = ['@RAUTHY_ENC_KEY_ID@/@RAUTHY_ENC_KEY@']
+
+[user_registration]
+# Open registration needs working mail (activation link): enabled only
+# when SMTP is configured (install.sh --smtp-url ...).
+enable = @RAUTHY_REGISTRATION@
+
+[bootstrap]
+# Password: BOOTSTRAP_ADMIN_PASSWORD_PLAIN (compose.yaml, from .env).
+admin_email = '@ADMIN_EMAIL@'
+
+[webauthn]
+# Overridden by RP_ID / RP_ORIGIN in compose.yaml.
+rp_id = '@RP_ID@'
+rp_origin = '@RP_ORIGIN@'

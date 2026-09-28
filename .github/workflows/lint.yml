@@ -1,0 +1,37 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -x install.sh scripts/pnexctl client/setup-ubuntu.sh \
+            config/pki/pki-init.sh config/certbot/run.sh config/nginx/40-cert-watch.sh \
+            tests/validate-compose.sh
+      - name: bash -n
+        run: for f in install.sh scripts/pnexctl client/setup-ubuntu.sh; do bash -n "$f"; done
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config (every storage x TLS combination)
+        run: |
+          docker compose version
+          bash tests/validate-compose.sh
+
+  installer-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh --dry-run
+        run: |
+          bash install.sh --dry-run --non-interactive --source local \
+            --admin-user admin@example.com --tag ci-test --storage s3
