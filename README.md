@@ -44,7 +44,7 @@ automatically when missing.
 | `--profile raspi\|server` | auto | `raspi`: memory-tuned (small Postgres buffers, capped OpenObserve caches, one stitching job). Auto = `raspi` on a Pi or below 6 GB RAM. |
 | `--storage fs\|s3` | `fs` | `fs`: firmware artefacts in Postgres, media on a Docker volume. `s3`: adds RustFS (S3-compatible) for both. Chosen once. |
 | `--smtp-url HOST`, `--smtp-port`, `--smtp-user`, `--smtp-password`, `--smtp-from` | | Optional outgoing mail. Without SMTP, self-registration and password-reset mails are disabled; the admin creates users in the Rauthy admin UI. |
-| `--tag TAG` | `VERSION` file | Image tag of `pnex-server-rs` / `pnex-builder-rs`. |
+| `--tag TAG` | `VERSION` file (`latest`) | Image tag of `pnex-server-rs` / `pnex-builder-rs`. `latest` follows the last green `main`; pin `main-<sha>` for reproducible installs. |
 | `--ref REF` (`--version REF`) | `main` | Git ref of this recipe (branch, tag or commit). |
 | `--http-port`, `--https-port` | `80`, `443` | Published ports. Keep the defaults in production. |
 | `--home DIR` | `/opt/pnex` | Install directory. |
@@ -98,8 +98,8 @@ are only reachable on the internal Docker network.
 ```bash
 sudo pnexctl status            # containers, versions, endpoint health, certificate expiry
 sudo pnexctl logs pnex-server -f
-sudo pnexctl upgrade           # latest recipe + the image tag in its VERSION file
-sudo pnexctl upgrade dirty-1a2b3c4   # a specific image tag
+sudo pnexctl upgrade           # latest recipe + re-pull the VERSION tag (`latest`)
+sudo pnexctl upgrade main-1a2b3c4    # pin an immutable image tag
 sudo pnexctl backup            # pg_dump + .env + CA into /var/backups/pnex/
 sudo pnexctl backup --volumes  # also archive every data volume (brief downtime)
 sudo pnexctl log-level info    # more verbose logs while diagnosing (default: error)
@@ -211,7 +211,7 @@ has no Web Serial). On Ubuntu run `client/setup-ubuntu.sh` once (above); it:
 ```
 install.sh              the installer (self-contained: fetches the rest when piped)
 compose.yaml            the production stack (profiles: s3, cloud)
-VERSION                 default image tag for this recipe
+VERSION                 default image tag for this recipe (`latest` = last green main)
 config/nginx/           TLS edge template + certificate hot-reload hook
 config/pki/             local CA / certificate issuance (one-shot container)
 config/certbot/         Let's Encrypt loop (cloud mode)
