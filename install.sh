@@ -930,7 +930,7 @@ main() {
     PNEX_HOME=$(pick "$F_HOME" /opt/pnex)
     if ((DRY_RUN)) && [[ -z $F_HOME ]]; then
         PNEX_HOME=$(mktemp -d "${TMPDIR:-/tmp}/pnex-dry-run.XXXXXX")
-        [[ -f /opt/pnex/.env ]] && cp /opt/pnex/.env "$PNEX_HOME/.env" 2>/dev/null || true
+        if [[ -f /opt/pnex/.env ]]; then cp /opt/pnex/.env "$PNEX_HOME/.env" 2>/dev/null || true; fi
     fi
     install_base_tools
     load_env "$PNEX_HOME/.env"
