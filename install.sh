@@ -566,6 +566,9 @@ write_env() {
     OPENOBSERVE_ROOT_PASSWORD=$(pick "$(old OPENOBSERVE_ROOT_PASSWORD)" "O2x$(rand_hex 16)Z9!")
     PNEX_NOTIFY_INTERNAL_TOKEN=$(pick "$(old PNEX_NOTIFY_INTERNAL_TOKEN)" "$(rand_hex 32)")
     PNEX_FLOW_RUNTIME_TOKEN=$(pick "$(old PNEX_FLOW_RUNTIME_TOKEN)" "$(rand_hex 32)")
+    # Org secrets vault keyring (`<id>:<base64 32 bytes>`). Losing it makes
+    # every stored secret unreadable: it lives in .env, covered by backups.
+    PNEX_SECRETS_KEYS=$(pick "$(old PNEX_SECRETS_KEYS)" "k1:$(openssl rand -base64 32)")
     RAUTHY_SECRET_RAFT=$(pick "$(old RAUTHY_SECRET_RAFT)" "$(rand_hex 24)")
     RAUTHY_SECRET_API=$(pick "$(old RAUTHY_SECRET_API)" "$(rand_hex 24)")
     RAUTHY_ENC_KEY_ID=$(pick "$(old RAUTHY_ENC_KEY_ID)" "k$(rand_hex 7)")
@@ -645,6 +648,7 @@ write_env() {
         echo "OPENOBSERVE_ROOT_PASSWORD='$OPENOBSERVE_ROOT_PASSWORD'"
         echo "PNEX_NOTIFY_INTERNAL_TOKEN='$PNEX_NOTIFY_INTERNAL_TOKEN'"
         echo "PNEX_FLOW_RUNTIME_TOKEN='$PNEX_FLOW_RUNTIME_TOKEN'"
+        echo "PNEX_SECRETS_KEYS='$PNEX_SECRETS_KEYS'"
         echo "RAUTHY_SECRET_RAFT='$RAUTHY_SECRET_RAFT'"
         echo "RAUTHY_SECRET_API='$RAUTHY_SECRET_API'"
         echo "RAUTHY_ENC_KEY_ID='$RAUTHY_ENC_KEY_ID'"

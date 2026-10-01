@@ -38,6 +38,8 @@ x-pnex-env: &pnex-env
   VALKEY_URL: redis://valkey:6379
   PNEX_NOTIFY_INTERNAL_TOKEN: ${PNEX_NOTIFY_INTERNAL_TOKEN:?run install.sh}
   PNEX_FLOW_RUNTIME_TOKEN: ${PNEX_FLOW_RUNTIME_TOKEN:?run install.sh}
+  # Secrets vault keyring: the server refuses to start without it.
+  PNEX_SECRETS_KEYS: ${PNEX_SECRETS_KEYS:?run install.sh}
   # Firmware artefacts: `db` (Postgres) or `s3` (RustFS). Media: `fs`
   # (the /data volume) or `s3`. Chosen once at install time.
   STORAGE_BACKEND: ${STORAGE_BACKEND:-db}
