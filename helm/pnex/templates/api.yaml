@@ -1,0 +1,113 @@
+# pnex-server: HTTP API, websockets, web UI and the flow runtime (child
+# process). Stateless: flows are rebuilt from the database at boot, media
+# and firmware artefacts live in RustFS. Several replicas form a flow
+# execution cluster (each org's flows run on exactly one pod); migrations
+# run once under a Postgres advisory lock.
+{{- $name := printf "%s-api" (include "pnex.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "api") | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  # The old pod drains (its orgs move to the new one) before it stops: no
+  # flow ever runs twice, no downtime.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "api") | nindent 8 }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Shutdown drains the flow worker (<= 20 s), flushes buffered
+      # telemetry (<= 10 s) and releases singleton leases.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: pnex-server
+          image: "{{ .Values.image.registry }}/pnex-server-rs:{{ include "pnex.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["start"]
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            {{- include "pnex.appEnv" . | nindent 12 }}
+            # Flow execution cluster (D106): every pod advertises its own
+            # address and shares the cluster token (internal routes are
+            # fail-closed). Worker id = pod name.
+            - name: POD_IP
+              valueFrom:
+                fieldRef: { fieldPath: status.podIP }
+            - name: PNEX_FLOW_ADVERTISE_URL
+              value: "http://$(POD_IP):5150"
+            - name: PNEX_FLOW_CLUSTER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: flow-cluster-token }
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 5150 }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        # Scratch only (flow runtime artefacts, rebuilt at boot).
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "pnex.selector" (list . "api") | nindent 4 }}
+  ports:
+    - { name: http, port: 5150, targetPort: http }
+{{- if gt (int .Values.api.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "api") | nindent 6 }}
+{{- end }}

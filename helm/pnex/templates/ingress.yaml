@@ -1,0 +1,49 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "pnex.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  annotations:
+    {{- if not .Values.ingress.tls }}
+    # TLS terminated upstream (Cloudflare...): no http -> https redirect loop.
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    {{- end }}
+    # Media uploads (360 captures, firmware artefacts): the API enforces its
+    # own limits.
+    nginx.ingress.kubernetes.io/proxy-body-size: 1g
+    # Device + UI websockets and Rauthy SSE: long-lived, idle between frames.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- range . }}
+    - secretName: {{ .secretName }}
+      hosts: [{{ $.Values.publicHost | quote }}]
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.publicHost | quote }}
+      http:
+        paths:
+          - path: /auth/v1/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-rauthy
+                port: { name: http }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-api
+                port: { name: http }
+{{- end }}

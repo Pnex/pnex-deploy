@@ -1,0 +1,20 @@
+PNeX is deploying on https://{{ .Values.publicHost }}/
+
+  Watch the rollout:
+    kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+  Admin login:  {{ .Values.admin.email }}
+  Password (first Rauthy start only, then change it from the account page):
+    kubectl -n {{ .Release.Namespace }} get secret {{ include "pnex.secretName" . }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
+
+  Rauthy admin UI: https://{{ .Values.publicHost }}/auth/v1/admin
+
+  Back up the secrets vault keyring with your database backups (org
+  secrets cannot be decrypted without it):
+    kubectl -n {{ .Release.Namespace }} get secret {{ include "pnex.secretName" . }} -o jsonpath='{.data.secrets-keys}' | base64 -d; echo
+{{- if .Values.smtp.enabled }}
+  Outgoing mail: {{ .Values.smtp.host }}:{{ .Values.smtp.port }} as {{ .Values.smtp.username }}
+{{- if and (not .Values.smtp.password) (not .Values.secrets.existingSecret) }}
+  WARNING: smtp.password is empty — Rauthy cannot send mail until it is set.
+{{- end }}
+{{- end }}

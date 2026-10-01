@@ -35,3 +35,15 @@ jobs:
         run: |
           bash install.sh --dry-run --non-interactive --source local \
             --admin-user admin@example.com --tag ci-test --storage s3
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: helm lint + template (single and multi replica)
+        run: |
+          helm lint helm/pnex --set admin.email=admin@example.com
+          helm template pnex helm/pnex --set admin.email=admin@example.com >/dev/null
+          helm template pnex helm/pnex --set admin.email=admin@example.com \
+            --set api.replicas=3 --set networkPolicy.enabled=false >/dev/null

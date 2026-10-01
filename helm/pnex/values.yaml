@@ -1,0 +1,220 @@
+# PNeX Helm chart — default values.
+#
+# This repository is public: NEVER put a secret in a values file. Secrets
+# are either generated in-cluster on first install (and kept across
+# upgrades and uninstalls), or provided by you through `existingSecret`
+# (e.g. rendered by sops / sealed-secrets / external-secrets).
+
+# Public host name (no scheme). Browsers, apps and devices all use
+# https://<publicHost>/ — TLS is terminated in front of the cluster
+# (Cloudflare, a load balancer...) or by the ingress (`ingress.tls`).
+publicHost: pnex.example.com
+
+# Admin account: Rauthy bootstrap administrator + PNeX platform admin.
+# Rauthy reads it on its very first start only (empty database).
+admin:
+  email: ""
+  # Extra PNeX platform admins (comma separated), on top of admin.email.
+  extraPlatformAdmins: ""
+
+# Log verbosity of every PNeX / Rauthy / RustFS container.
+logLevel: error
+
+# ── Secrets ─────────────────────────────────────────────────────────────
+# Keep real values in an encrypted values file (sops), never in plain text
+# in git. Any value left empty is generated once in-cluster and then kept
+# (the Secret is annotated `helm.sh/resource-policy: keep`): upgrades never
+# rotate it. Rauthy's encryption key and raft secret must stay stable for
+# the lifetime of its database.
+secrets:
+  # Use a Secret you manage yourself instead (same keys as the generated
+  # `<release>-secrets`, see templates/secrets.yaml); all values below are
+  # then ignored.
+  existingSecret: ""
+  # Rauthy bootstrap admin password: first start only, change it later from
+  # the Rauthy account page.
+  adminPassword: ""
+  o2RootPassword: ""
+  notifyInternalToken: ""
+  flowRuntimeToken: ""
+  # Shared by every API pod (internal flow-cluster routes, fail-closed).
+  flowClusterToken: ""
+  # Org secrets vault keyring, `k1:<base64 of 32 bytes>`. The server
+  # refuses to start without it, and an org secret encrypted under a key
+  # that is lost can never be read again: back it up (sops) with the
+  # database backups. Rotation: `k2:<new>,k1:<old>`, upgrade, run the
+  # re-encryption from the platform status page, then drop `k1`.
+  secretsKeys: ""
+  valkeyPassword: ""
+  rustfsAccessKey: ""
+  rustfsSecretKey: ""
+  rauthySecretRaft: ""
+  rauthySecretApi: ""
+  # Encryption key: id = alphanumeric, key = base64 of 32 random bytes
+  # (`openssl rand -base64 32`).
+  rauthyEncKeyId: ""
+  rauthyEncKey: ""
+  # Bootstrap API key secret (>= 64 alphanumeric chars), used by the
+  # branding job: `Authorization: API-Key pnex-install$<secret>`.
+  rauthyApiKeySecret: ""
+
+# ── Outgoing mail (Rauthy: account activation, password reset) ─────────
+smtp:
+  enabled: false
+  host: ""
+  # 465 = implicit TLS, 587 = STARTTLS. Rauthy never sends in clear text.
+  port: 465
+  username: ""
+  from: ""
+  # Stored in the chart Secret (key smtp-password). Ignored when
+  # secrets.existingSecret is set: put `smtp-password` in that Secret.
+  password: ""
+  # Prefix of every mail subject.
+  subjectPrefix: PNeX
+
+# ── Images ──────────────────────────────────────────────────────────────
+image:
+  registry: docker.io/shanisma
+  # Defaults to .Chart.AppVersion (`latest` = last green main). Pin
+  # `main-<sha>` for reproducible deployments.
+  tag: ""
+  pullPolicy: Always
+imagePullSecrets: []
+
+# ── pnex-server (HTTP API, websockets, web UI, flow runtime) ────────────
+api:
+  replicas: 1
+  # Deployment mode: `self_hosted` (no subscription tiers) or `saas`.
+  deploymentMode: self_hosted
+  defaultRetentionDays: 30
+  dbMaxConnections: 10
+  # Several replicas share the flows (each org runs on exactly one pod) and
+  # the HTTP/websocket traffic; size Postgres so that
+  # replicas x (dbMaxConnections + 2) stays below postgres max_connections.
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  rateLimit:
+    enabled: true
+    # CIDRs whose X-Forwarded-For is trusted to find the client IP. Empty =
+    # the server default (private ranges: covers the ingress controller).
+    # Behind a CDN, append its ranges so the limit applies per real client,
+    # not per CDN edge (Cloudflare: https://www.cloudflare.com/ips/).
+    trustedProxies: ""
+  extraEnv: []
+
+# ── Custom firmware IDE (user C++ compiled by the worker) ───────────────
+# Off by default. The builder image ships no bubblewrap: `sandbox: none`
+# runs user code in the worker container, which holds the database
+# credentials. Enable only when every user of the platform is trusted.
+customFirmware:
+  enabled: false
+  sandbox: bwrap
+
+# ── pnex-builder (queue worker: PlatformIO builds, 360° stitching) ──────
+worker:
+  replicas: 1
+  stitchMaxConcurrent: 2
+  stitchOutWidth: 4096
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 4Gi }
+  extraEnv: []
+
+# ── PostgreSQL (CloudNativePG operator must be installed) ───────────────
+postgres:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  size: 5Gi
+  storageClass: ""
+  parameters:
+    shared_buffers: 256MB
+    effective_cache_size: 1GB
+    work_mem: 4MB
+    maintenance_work_mem: 64MB
+    max_connections: "100"
+    checkpoint_timeout: 15min
+    wal_compression: "on"
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 1Gi }
+
+# ── Valkey (presence leases, device bus, live cache — no persistence) ────
+valkey:
+  image: valkey/valkey:9-alpine
+  maxmemory: 128mb
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# ── Rauthy (OpenID Connect provider, served on /auth/v1/) ───────────────
+rauthy:
+  image: ghcr.io/sebadob/rauthy:0.36.2
+  # Pod CIDR of the ingress controller: Rauthy trusts X-Forwarded-For only
+  # from these ranges (newline separated). microk8s/calico default below.
+  trustedProxies: "10.1.0.0/16"
+  # Header carrying the real client IP when a CDN sits in front of the
+  # ingress (e.g. "CF-Connecting-IP" behind Cloudflare). Without it, sessions
+  # are bound to the CDN edge IP, which changes between requests and breaks
+  # login. Only set it if the origin is reachable exclusively through the CDN.
+  peerIpHeader: ""
+  # Self-registration needs working mail (activation link). Defaults to
+  # smtp.enabled when left empty.
+  registration: ""
+  persistence:
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  # Post-install/upgrade job: PNeX theme + logos on the login pages.
+  branding:
+    enabled: true
+    image: curlimages/curl:8.16.0
+
+# ── OpenObserve (telemetry, logs, events) ───────────────────────────────
+openobserve:
+  image: openobserve/openobserve:v1.0.0
+  rootEmail: root@pnex.local
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  # Cache sizes in MB.
+  memoryCacheMaxSize: 512
+  memoryCacheDatafusionMaxSize: 512
+  memTableMaxSize: 256
+  maxFileSizeInMemory: 128
+  diskCacheMaxSize: 2048
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 2Gi }
+
+# ── RustFS (S3-compatible store: firmware artefacts + media) ────────────
+rustfs:
+  image: rustfs/rustfs:1.0.0-rc.2
+  bucket: pnex
+  region: us-east-1
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  # One-shot bucket creation (AWS CLI — no MinIO product in the stack).
+  initImage: amazon/aws-cli:2.27.49
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+
+# ── NetworkPolicy ───────────────────────────────────────────────────────
+# Valkey, OpenObserve and RustFS only accept PNeX pods (needs a CNI that
+# enforces policies: Calico, Cilium...).
+networkPolicy:
+  enabled: true
+
+# ── Ingress ─────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  # TLS terminated by the ingress. Leave empty when TLS is terminated
+  # upstream (Cloudflare proxy, external load balancer).
+  tls: []
+  #  - secretName: pnex-tls

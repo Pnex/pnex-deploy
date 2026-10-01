@@ -1,0 +1,72 @@
+{{- if .Values.rauthy.branding.enabled }}
+# PNeX theme + logos on Rauthy's login pages (clients `pnex` and `rauthy`).
+# Idempotent PUTs through the bootstrap API key; cosmetic only.
+{{- $name := printf "%s-rauthy-branding" (include "pnex.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+data:
+  theme.json: |
+    {{- .Files.Get "files/branding/theme.json" | nindent 4 }}
+binaryData:
+  logo-card.png: {{ .Files.Get "files/branding/logo-card.png" | b64enc }}
+  logo-mark.png: {{ .Files.Get "files/branding/logo-mark.png" | b64enc }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: branding
+          image: {{ .Values.rauthy.branding.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            - name: API_KEY_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rauthy-api-key-secret }
+            - { name: BASE, value: "http://{{ include "pnex.fullname" . }}-rauthy:8080/auth/v1" }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              until curl -sf -o /dev/null "$BASE/.well-known/openid-configuration"; do
+                echo "rauthy not ready, retrying..."; sleep 3
+              done
+              # Kubernetes reduces "$$" to "$" in command args: build the
+              # literal dollar separator from a variable instead.
+              dollar='$'
+              auth="Authorization: API-Key pnex-install${dollar}${API_KEY_SECRET}"
+              for c in pnex rauthy; do
+                sed "s/\"client_id\": \"pnex\"/\"client_id\": \"$c\"/" /branding/theme.json >/tmp/theme.json
+                curl -sfS -o /dev/null -X PUT -H "$auth" -H 'Content-Type: application/json' \
+                  --data-binary @/tmp/theme.json "$BASE/theme/$c"
+                curl -sfS -o /dev/null -X PUT -H "$auth" \
+                  -F "image=@/branding/logo-card.png;type=image/png" "$BASE/clients/$c/logo"
+                curl -sfS -o /dev/null -X PUT -H "$auth" \
+                  -F "image=@/branding/logo-mark.png;type=image/png" "$BASE/clients/$c/favicon"
+              done
+              echo "Rauthy login pages branded"
+          volumeMounts:
+            - { name: branding, mountPath: /branding, readOnly: true }
+      volumes:
+        - name: branding
+          configMap:
+            name: {{ $name }}
+{{- end }}

@@ -1,0 +1,27 @@
+# PostgreSQL through the CloudNativePG operator. The operator generates the
+# `<cluster>-app` secret (user `pnex`, key `uri`) read by the API and worker.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "pnex.pgCluster" . }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.postgres.instances }}
+  imageName: {{ .Values.postgres.imageName }}
+  bootstrap:
+    initdb:
+      database: pnex
+      owner: pnex
+  storage:
+    size: {{ .Values.postgres.size }}
+    {{- with .Values.postgres.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  postgresql:
+    parameters:
+      {{- range $k, $v := .Values.postgres.parameters }}
+      {{ $k }}: {{ $v | quote }}
+      {{- end }}
+  resources:
+    {{- toYaml .Values.postgres.resources | nindent 4 }}

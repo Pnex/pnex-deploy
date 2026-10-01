@@ -1,0 +1,179 @@
+# OIDC identity provider, served on https://<publicHost>/auth/v1/. Plain
+# HTTP inside the cluster: TLS ends at the edge (PROXY_MODE). Bootstrap data
+# (admin, `pnex` client, API key) is read on the very first start only.
+{{- $name := printf "%s-rauthy" (include "pnex.fullname" .) }}
+{{- $secret := include "pnex.secretName" . }}
+{{- $host := .Values.publicHost }}
+{{- $apiKey := dict "name" "pnex-install" "access" (list (dict "group" "Clients" "access_rights" (list "read" "create" "update" "delete"))) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+data:
+  # Non-secret settings only; secrets come from the environment.
+  # Reference: https://sebadob.github.io/rauthy/config/config.html
+  config.toml: |
+    [server]
+    port_http = 8080
+    scheme = "http"
+    pub_url = '{{ $host }}'
+
+    [cluster]
+    node_id = 1
+    data_dir = '/app/data'
+
+    [user_registration]
+    enable = {{ include "pnex.registration" . }}
+
+    [bootstrap]
+    admin_email = '{{ .Values.admin.email }}'
+
+    [webauthn]
+    rp_id = '{{ $host }}'
+    rp_origin = 'https://{{ $host }}:443'
+  clients.json: |
+    [
+      {
+        "id": "pnex",
+        "name": "PNeX",
+        "secret": null,
+        "enabled": true,
+        "redirect_uris": [
+          "https://{{ $host }}/auth/callback",
+          "https://{{ $host }}/api/v1/oauth2/native",
+          "pnex://auth/callback"
+        ],
+        "post_logout_redirect_uris": ["https://{{ $host }}/"],
+        "allowed_origins": ["https://{{ $host }}"],
+        "flows_enabled": ["authorization_code", "refresh_token"],
+        "access_token_alg": "RS256",
+        "id_token_alg": "RS256",
+        "auth_code_lifetime": 300,
+        "access_token_lifetime": 3600,
+        "scopes": ["openid", "profile", "email"],
+        "default_scopes": ["openid", "profile", "email"],
+        "challenges": ["S256"],
+        "force_mfa": false,
+        "client_uri": "https://{{ $host }}"
+      }
+    ]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "rauthy") | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "rauthy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "rauthy") | nindent 8 }}
+      annotations:
+        checksum/config: {{ printf "%s%s" (toJson .Values.rauthy) (toJson .Values.smtp) | sha256sum }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: rauthy
+          image: {{ .Values.rauthy.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            - { name: PUB_URL, value: {{ $host | quote }} }
+            - { name: LOG_LEVEL, value: {{ .Values.logLevel | quote }} }
+            - { name: LOG_LEVEL_DATABASE, value: {{ .Values.logLevel | quote }} }
+            - { name: DEV_MODE, value: "false" }
+            - { name: LISTEN_SCHEME, value: http }
+            - { name: PROXY_MODE, value: "true" }
+            - { name: TRUSTED_PROXIES, value: {{ .Values.rauthy.trustedProxies | quote }} }
+            {{- with .Values.rauthy.peerIpHeader }}
+            - { name: PEER_IP_HEADER_NAME, value: {{ . | quote }} }
+            {{- end }}
+            - { name: COOKIE_MODE, value: host }
+            - { name: HQL_NODE_ID, value: "1" }
+            - { name: RP_ID, value: {{ $host | quote }} }
+            - { name: RP_ORIGIN, value: "https://{{ $host }}:443" }
+            - { name: BOOTSTRAP_ADMIN_EMAIL, value: {{ .Values.admin.email | quote }} }
+            - { name: RAUTHY_ADMIN_EMAIL, value: {{ .Values.admin.email | quote }} }
+            - name: BOOTSTRAP_ADMIN_PASSWORD_PLAIN
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: admin-password }
+            - name: HQL_SECRET_RAFT
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: rauthy-secret-raft }
+            - name: HQL_SECRET_API
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: rauthy-secret-api }
+            - name: ENC_KEY_ACTIVE
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: rauthy-enc-key-id }
+            - name: ENC_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: rauthy-enc-key }
+            - { name: ENC_KEYS, value: "$(ENC_KEY_ACTIVE)/$(ENC_KEY)" }
+            # API key used by the branding job (key definition is public,
+            # its secret is not).
+            - { name: BOOTSTRAP_API_KEY, value: {{ toJson $apiKey | b64enc | quote }} }
+            - name: BOOTSTRAP_API_KEY_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: rauthy-api-key-secret }
+            {{- if .Values.smtp.enabled }}
+            # SMTP variables must be absent (not empty) when mail is off:
+            # an empty SMTP_FROM makes Rauthy panic.
+            - { name: SMTP_URL, value: {{ required "smtp.host is required" .Values.smtp.host | quote }} }
+            - { name: SMTP_PORT, value: {{ .Values.smtp.port | quote }} }
+            - { name: SMTP_USERNAME, value: {{ .Values.smtp.username | quote }} }
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: smtp-password, optional: true }
+            - { name: SMTP_FROM, value: {{ required "smtp.from is required" .Values.smtp.from | quote }} }
+            - { name: EMAIL_SUB_PREFIX, value: {{ .Values.smtp.subjectPrefix | quote }} }
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.rauthy.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: config, mountPath: /app/config.toml, subPath: config.toml, readOnly: true }
+            - { name: config, mountPath: /app/bootstrap/clients.json, subPath: clients.json, readOnly: true }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        {{- include "pnex.persistence" .Values.rauthy.persistence | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "pnex.selector" (list . "rauthy") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }

@@ -1,0 +1,64 @@
+# Device presence leases (anti-clone, D108), device command bus, live
+# last-value cache and org memory. Standalone, password protected, no
+# persistence: after a restart the server rebuilds its state. Eviction is
+# `volatile-lru` (keys with a TTL only): `allkeys-lru` could evict the
+# presence index and mark the whole fleet offline.
+{{- $name := printf "%s-valkey" (include "pnex.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "valkey") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "valkey") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "valkey") | nindent 8 }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: valkey
+          image: {{ .Values.valkey.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: valkey-password }
+            # Lets the valkey-cli probe authenticate.
+            - { name: REDISCLI_AUTH, value: "$(VALKEY_PASSWORD)" }
+          args: ["valkey-server", "--save", "", "--appendonly", "no",
+                 "--requirepass", "$(VALKEY_PASSWORD)",
+                 "--maxmemory", {{ .Values.valkey.maxmemory | quote }},
+                 "--maxmemory-policy", "volatile-lru", "--loglevel", "warning"]
+          ports:
+            - { name: redis, containerPort: 6379 }
+          readinessProbe:
+            exec: { command: ["valkey-cli", "ping"] }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: redis }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "pnex.selector" (list . "valkey") | nindent 4 }}
+  ports:
+    - { name: redis, port: 6379, targetPort: redis }
