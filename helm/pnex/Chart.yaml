@@ -6,6 +6,7 @@ version: 0.2.0
 # Image tag of pnex-server-rs / pnex-builder-rs (continuously built from green main).
 appVersion: "latest"
 home: https://pnex.io
+icon: https://pnex.io/logo.png
 sources:
   - https://github.com/Pnex/pnex-deploy
 kubeVersion: ">=1.27.0-0"
