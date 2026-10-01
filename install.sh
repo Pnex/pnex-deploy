@@ -39,8 +39,15 @@ Identity
                             in non-interactive mode. Cannot contain a single quote.
 
 Network / TLS
-  --domain NAME             Public name (default: <hostname>.local, published by mDNS).
-                            An IP address works too (passkeys are then unavailable).
+  --domain NAME             Public name (default: <hostname>.local, published by mDNS;
+                            sslip on WSL). An IP address works too (passkeys are then
+                            unavailable). Magic values, for a real DNS name without
+                            owning a domain:
+                              sslip  ->  pnex-192-168-1-20.sslip.io
+                              nip    ->  pnex-192-168-1-20.nip.io
+                            (public wildcard DNS that answers with the embedded IP).
+  --ip ADDR                 IPv4 embedded in a sslip/nip name (default: the address of
+                            the interface holding the default route).
   --tls local|cloud         local (default): private CA generated on this host.
                             cloud: Let's Encrypt (ports 80/443 reachable from the
                             internet, --domain and --acme-email required).
@@ -84,7 +91,7 @@ EOF
 
 # ── Flags ───────────────────────────────────────────────────────────────
 F_ADMIN_USER="" F_ADMIN_PASSWORD="" F_DOMAIN="" F_TLS="" F_ACME_EMAIL=""
-F_ACME_STAGING="" F_HTTP_PORT="" F_HTTPS_PORT="" F_PROFILE="" F_STORAGE=""
+F_IP="" F_ACME_STAGING="" F_HTTP_PORT="" F_HTTPS_PORT="" F_PROFILE="" F_STORAGE=""
 F_SMTP_URL="" F_SMTP_PORT="" F_SMTP_USER="" F_SMTP_PASSWORD="" F_SMTP_FROM=""
 F_TAG="" F_REF="" F_SOURCE="auto" F_HOME="" F_REGISTRY=""
 NO_PULL=0 NON_INTERACTIVE=0 DRY_RUN=0 FORCE=0 WAIT_SECS=600
@@ -114,6 +121,7 @@ parse_args() {
             --admin-user) F_ADMIN_USER=$val ;;
             --admin-password) F_ADMIN_PASSWORD=$val ;;
             --domain) F_DOMAIN=$val ;;
+            --ip) F_IP=$val ;;
             --tls) F_TLS=$val ;;
             --acme-email) F_ACME_EMAIL=$val ;;
             --http-port) F_HTTP_PORT=$val ;;
@@ -195,6 +203,37 @@ lan_ipv4s() {
 
 is_ip() { [[ $1 =~ ^[0-9]+(\.[0-9]+){3}$ ]]; }
 
+# Source address of the default route (the LAN address on most hosts).
+primary_ipv4() {
+    ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}'
+}
+
+is_private_ip() {
+    [[ $1 =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.|169\.254\.) ]]
+}
+
+# Windows Subsystem for Linux (WSL 2).
+is_wsl() {
+    [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] || grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Docker Desktop provides the engine (WSL integration): its daemon and
+# daemon.json do not live in this distribution.
+is_docker_desktop() {
+    docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -qi 'docker desktop'
+}
+
+# `sslip` / `nip` -> pnex-a-b-c-d.sslip.io / .nip.io. Dashes, not dots:
+# the name stays a single label under the service domain.
+magic_domain() { # $1 = sslip | nip
+    local ip suffix
+    case $1 in sslip) suffix=sslip.io ;; nip) suffix=nip.io ;; esac
+    ip=$(pick "$F_IP" "$(primary_ipv4)")
+    [[ -n $ip ]] || die "--domain $1: no IPv4 found, pass --ip"
+    is_ip "$ip" || die "invalid --ip '$ip'"
+    printf 'pnex-%s.%s' "${ip//./-}" "$suffix"
+}
+
 version_ge() { # $1 >= $2 (dotted numeric)
     [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
 }
@@ -252,14 +291,29 @@ resolve_settings() {
     # TLS + domain.
     TLS_MODE=$(pick "$F_TLS" "$(old PNEX_TLS_MODE)" local)
     [[ $TLS_MODE == local || $TLS_MODE == cloud ]] || die "--tls must be local or cloud"
-    DOMAIN=$(pick "$F_DOMAIN" "$(old PNEX_DOMAIN)" "$HOSTNAME_LC.local")
+    # WSL: no mDNS towards the LAN, a sslip.io name is the reliable default.
+    local default_domain="$HOSTNAME_LC.local"
+    IS_WSL=0
+    if is_wsl; then IS_WSL=1; default_domain=sslip; fi
+    DOMAIN=$(pick "$F_DOMAIN" "$(old PNEX_DOMAIN)" "$default_domain")
     DOMAIN=$(tr '[:upper:]' '[:lower:]' <<<"$DOMAIN")
+    [[ -n $F_IP && $DOMAIN != sslip && $DOMAIN != nip ]] && die "--ip only applies to --domain sslip or nip"
+    case $DOMAIN in sslip | nip) DOMAIN=$(magic_domain "$DOMAIN") ;; esac
     [[ $DOMAIN =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || die "invalid domain '$DOMAIN'"
     if [[ -n $(old PNEX_DOMAIN) && $DOMAIN != "$(old PNEX_DOMAIN)" ]]; then
         warn "domain changes from $(old PNEX_DOMAIN) to $DOMAIN: devices flashed for the old name must be re-flashed."
     fi
     ACME_EMAIL=$(pick "$F_ACME_EMAIL" "$(old ACME_EMAIL)")
     ACME_STAGING=$(pick "$F_ACME_STAGING" "$(old ACME_STAGING)")
+    if [[ $DOMAIN =~ \.(sslip|nip)\.io$ ]]; then
+        local embedded=${DOMAIN#pnex-}
+        embedded=${embedded%%.*}
+        embedded=${embedded//-/.}
+        if [[ $TLS_MODE == cloud ]] && is_private_ip "$embedded"; then
+            die "$DOMAIN points to a private address: Let's Encrypt cannot reach it, use --tls=local"
+        fi
+        info "wildcard DNS: $DOMAIN -> $embedded (needs internet DNS on clients and devices)"
+    fi
     if [[ $TLS_MODE == cloud ]]; then
         [[ -n $ACME_EMAIL ]] || die "--acme-email is required with --tls=cloud"
         is_ip "$DOMAIN" && die "--tls=cloud needs a public DNS name, not an IP"
@@ -283,7 +337,7 @@ resolve_settings() {
             [[ $ip == "$DOMAIN" ]] && continue
             EXTRA_SANS="${EXTRA_SANS:+$EXTRA_SANS,}IP:$ip,DNS:$ip"
         done
-        if [[ "$HOSTNAME_LC.local" != "$DOMAIN" ]]; then
+        if [[ "$HOSTNAME_LC.local" != "$DOMAIN" ]] && ((!IS_WSL)); then
             DOMAIN_ALIAS="$HOSTNAME_LC.local"
             EXTRA_SANS="DNS:$DOMAIN_ALIAS${EXTRA_SANS:+,$EXTRA_SANS}"
         fi
@@ -318,6 +372,15 @@ resolve_settings() {
     REGISTRY=$(pick "$F_REGISTRY" "$(old PNEX_IMAGE_REGISTRY)" docker.io/shanisma)
 
     info "arch $ARCH, profile $PROFILE, storage $STORAGE, TLS $TLS_MODE"
+    if ((IS_WSL)); then
+        info "WSL detected"
+        local pip
+        pip=$(primary_ipv4)
+        if [[ $pip =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]]; then
+            warn "WSL uses NAT networking ($pip): devices on the LAN cannot reach PNeX."
+            warn "Enable mirrored networking (README, 'Windows (WSL 2)'), restart WSL, then re-run."
+        fi
+    fi
     info "origin https://$PUBLIC_HOST (install dir $PNEX_HOME)"
     if ((FIRST_INSTALL)); then info "first install"; else info "existing install found: upgrade (secrets kept)"; fi
     if [[ $(getconf PAGESIZE 2>/dev/null || echo 4096) -gt 4096 ]]; then
@@ -354,7 +417,9 @@ install_prerequisites() {
     step "System packages"
     ((DRY_RUN)) && { info "dry-run: skipped"; return; }
     ok "base tools present (curl, openssl, jq)"
-    if [[ $DOMAIN == *.local || -n $DOMAIN_ALIAS ]]; then
+    if ((IS_WSL)); then
+        info "WSL: mDNS (avahi) skipped"
+    elif [[ $DOMAIN == *.local || -n $DOMAIN_ALIAS ]]; then
         apt_ensure avahi-daemon
         configure_avahi
     fi
@@ -382,6 +447,9 @@ install_docker() {
         return
     fi
     if ! command -v docker >/dev/null; then
+        if ((IS_WSL)) && [[ ! -d /run/systemd/system ]]; then
+            die "WSL without systemd: enable it ([boot] systemd=true in /etc/wsl.conf, then 'wsl --shutdown') or turn on Docker Desktop's WSL integration"
+        fi
         info "installing Docker Engine (get.docker.com)"
         curl -fsSL https://get.docker.com | sh >/dev/null
     fi
@@ -409,6 +477,10 @@ configure_host_logging() {
     fi
     # Docker daemon defaults: merged into an existing daemon.json, never
     # overwritten; an admin's own log-driver choice is left alone.
+    if is_docker_desktop; then
+        info "Docker Desktop engine: its log defaults are set in Docker Desktop, left unchanged"
+        return
+    fi
     local daemon=/etc/docker/daemon.json current merged
     mkdir -p /etc/docker
     current=$(cat "$daemon" 2>/dev/null || true)

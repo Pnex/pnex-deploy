@@ -1,23 +1,97 @@
 # PNeX — production install
 
-One command installs a complete, TLS-everywhere PNeX server on a Raspberry Pi
-(4 or 5, 64-bit OS) or on any Debian / Ubuntu machine (amd64 or arm64):
+Pick the installation that matches your hardware:
+
+| | Target | How |
+|---|---|---|
+| 🍓 | [Raspberry Pi](#raspberry-pi) (4 or 5, 64-bit OS) | one-line installer, `raspi` profile |
+| 🖥️ | [Linux server or VM](#linux-server-or-vm) (Debian / Ubuntu, amd64 or arm64) | one-line installer |
+| 🪟 | [Windows (WSL 2)](#windows-wsl-2) | the same installer inside WSL 2 |
+| ☸️ | [Kubernetes](#kubernetes-helm) | Helm chart (`helm/pnex`) |
+| ☁️ | Cloud providers (Terraform + Ansible) | coming soon |
+
+Every Docker install is TLS everywhere. Without a domain name, PNeX still
+gets a real host name and HTTPS: see [Names and TLS](#names-and-tls).
+
+### Raspberry Pi
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
   | sudo bash -s -- --admin-user admin@acme.io --admin-password 'choose-a-strong-one'
 ```
 
-Then open `https://<hostname>.local/` and trust the server's certificate
-authority once per device (see [Trusting the local CA](#trusting-the-local-ca)).
+Then open `https://<hostname>.local/` (name the Pi `pnex` and it is
+`https://pnex.local/`) and trust the server's certificate authority once per
+device (see [Trusting the local CA](#trusting-the-local-ca)). The `raspi`
+profile (small Postgres buffers, capped OpenObserve caches, one stitching
+job) is picked automatically. Prefer an SSD to the SD card.
 
-Everything else is optional. A fuller example:
+### Linux server or VM
+
+The same command on Debian 12/13 or Ubuntu 22.04+ (bare metal, Proxmox,
+VirtualBox, any cloud VM). Docker Engine and the compose plugin are
+installed when missing. On a LAN VM, a [sslip.io name](#names-and-tls) avoids
+any DNS setup:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
-  | sudo bash -s -- --profile=raspi --storage=fs \
-      --admin-user admin@acme.io --admin-password 'xxxx'
+  | sudo bash -s -- --domain sslip --admin-user admin@acme.io
 ```
+
+On a public VM with a DNS name, use Let's Encrypt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
+  | sudo bash -s -- --domain pnex.example.com --tls cloud --acme-email ops@example.com \
+      --admin-user admin@example.com
+```
+
+### Windows (WSL 2)
+
+PNeX runs in a WSL 2 Ubuntu distribution, with Docker Engine inside WSL
+(installed by the script) or Docker Desktop's WSL integration. Windows 11
+22H2 or later is needed for **mirrored networking**, which lets devices on
+the LAN reach the server.
+
+1. In PowerShell (admin): `wsl --install -d Ubuntu`.
+2. Create `%UserProfile%\.wslconfig`:
+
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+
+3. Inside Ubuntu, enable systemd (skip with Docker Desktop): add
+   `[boot]` / `systemd=true` to `/etc/wsl.conf`.
+4. In PowerShell (admin), restart WSL and open the ports to the LAN:
+
+   ```powershell
+   wsl --shutdown
+   Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow
+   New-NetFirewallRule -DisplayName "PNeX HTTPS" -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow
+   ```
+
+5. Inside Ubuntu, run the installer. On WSL it defaults to a sslip.io name
+   (`https://pnex-<lan-ip-with-dashes>.sslip.io`): mDNS does not cross WSL.
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
+     | sudo bash -s -- --admin-user admin@acme.io
+   ```
+
+Keep the PC awake while devices are connected; a Raspberry Pi or a small
+Linux box suits a permanent installation better.
+
+### Kubernetes (Helm)
+
+```bash
+helm upgrade --install pnex ./helm/pnex -n pnex --create-namespace \
+  --set publicHost=pnex.example.com --set admin.email=admin@example.com
+```
+
+Requires CloudNativePG and an ingress controller; TLS is terminated by the
+ingress or in front of the cluster. Secrets are generated in-cluster.
+Details, scaling and upgrades: [helm/README.md](helm/README.md).
 
 ## Requirements
 
@@ -26,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
 | Board / CPU | Raspberry Pi 4 (4 GB), any amd64/arm64 | Raspberry Pi 5 (8 GB) or a small x86 box |
 | OS | Raspberry Pi OS Lite 64-bit (bookworm/trixie), Debian 12/13, Ubuntu 22.04+ | Debian 13 / Pi OS trixie |
 | Disk | 16 GB free | an **SSD** (USB 3 or NVMe) rather than the SD card |
-| Network | LAN with mDNS, or a DNS name | a DHCP reservation for the server |
+| Network | LAN with mDNS, internet DNS (sslip.io) or a DNS name | a DHCP reservation for the server |
 
 32-bit Raspberry Pi OS is **not** supported (images are `linux/amd64` and
 `linux/arm64` only). Docker Engine and the compose plugin are installed
@@ -38,7 +112,8 @@ automatically when missing.
 |---|---|---|
 | `--admin-user EMAIL` | *(prompted)* | Admin account: Rauthy administrator + PNeX platform admin. Required on first install. |
 | `--admin-password PASS` | *(prompted / generated)* | Used only when the identity provider initialises. Generated and printed once in `--non-interactive` mode. |
-| `--domain NAME` | `<hostname>.local` | Public name. `.local` is announced by mDNS (avahi is installed). A DNS name or an IP address also works. |
+| `--domain NAME` | `<hostname>.local` (`sslip` on WSL) | Public name. `.local` is announced by mDNS (avahi is installed). `sslip` / `nip` build a wildcard-DNS name from the server IP. A DNS name or an IP address also works. See [Names and TLS](#names-and-tls). |
+| `--ip ADDR` | default-route IPv4 | Address embedded in a `sslip` / `nip` name (e.g. the public IP of a VM behind NAT). |
 | `--tls local\|cloud` | `local` | `local`: a private CA generated on the server. `cloud`: Let's Encrypt (needs a public DNS name and ports 80/443 open to the internet). |
 | `--acme-email EMAIL` | | Let's Encrypt account (cloud mode). `--acme-staging` for tests. |
 | `--profile raspi\|server` | auto | `raspi`: memory-tuned (small Postgres buffers, capped OpenObserve caches, one stitching job). Auto = `raspi` on a Pi or below 6 GB RAM. |
@@ -53,6 +128,34 @@ automatically when missing.
 | `--force` | | Allow a storage backend switch (no data migration!). |
 
 Run `install.sh --help` for the complete list.
+
+## Names and TLS
+
+Devices, browsers and passkeys need a **host name** that resolves to the
+server, and the certificate must carry it. Four ways to get one:
+
+| `--domain` | Name | Resolution | TLS | When |
+|---|---|---|---|---|
+| *(default)* | `<hostname>.local` | mDNS on the LAN (avahi) | local CA | Raspberry Pi / Linux on a home or lab LAN |
+| `sslip` or `nip` | `pnex-192-168-1-20.sslip.io` | public wildcard DNS, answers with the IP embedded in the name | local CA (private IP) or Let's Encrypt (public IP, `--tls cloud`) | no domain, mDNS unavailable (WSL, Android < 12, DNS-over-HTTPS browsers, VLANs), cloud VM without DNS |
+| `pnex.example.com` | your DNS record | your DNS | Let's Encrypt (`--tls cloud`) or local CA | production, public access |
+| `192.168.1.20` | bare IP | none | local CA | last resort: passkeys unavailable (WebAuthn refuses IPs) |
+
+[sslip.io](https://sslip.io) and [nip.io](https://nip.io) are free services:
+`pnex-192-168-1-20.sslip.io` resolves to `192.168.1.20`. The dashed form keeps
+the name a single label, which certificates handle best. Limits to know:
+
+- clients and devices need internet DNS (a fully offline LAN needs mDNS or
+  your own DNS);
+- some routers block public names that resolve to private addresses (DNS
+  rebinding protection): allow-list `sslip.io` / `nip.io`, or use another
+  resolver;
+- the name embeds the IP: give the server a DHCP reservation. After an IP
+  change, re-run the installer with the new `--domain sslip` and re-flash
+  the devices;
+- to avoid depending on a third party, delegate a subdomain of your own
+  zone to a self-hosted sslip.io DNS server, or create a wildcard record
+  (`*.lab.example.com`) pointing at the server.
 
 ## What gets installed
 
@@ -208,8 +311,12 @@ has no Web Serial). On Ubuntu run `client/setup-ubuntu.sh` once (above); it:
   did not log out and back in.
 - **`<hostname>.local` does not resolve** — Android (before 12) and some
   browsers with DNS-over-HTTPS ignore mDNS. Use a DHCP reservation and either
-  a router DNS name (`--domain pnex.home`) or the IP address
-  (`--domain 192.168.1.20`; passkeys are then unavailable, passwords work).
+  `--domain sslip` (see [Names and TLS](#names-and-tls)), a router DNS name
+  (`--domain pnex.home`) or the IP address (`--domain 192.168.1.20`; passkeys
+  are then unavailable, passwords work).
+- **A sslip.io / nip.io name does not resolve on the LAN** — the router's
+  DNS rebinding protection drops answers pointing at private addresses:
+  allow-list the domain in the router, or use another DNS resolver.
   Re-run the installer with the new `--domain`; devices flashed for the old
   name must be re-flashed.
 - **Certificate warning** — the CA is not trusted on that device yet (see
