@@ -41,13 +41,14 @@ Identity
 Network / TLS
   --domain NAME             Public name (default: <hostname>.local, published by mDNS;
                             sslip on WSL). An IP address works too (passkeys are then
-                            unavailable). Magic values, for a real DNS name without
-                            owning a domain:
-                              sslip  ->  pnex-192-168-1-20.sslip.io
-                              nip    ->  pnex-192-168-1-20.nip.io
+                            unavailable). Magic values, for a public VM without a
+                            domain (Let's Encrypt with --tls cloud):
+                              sslip  ->  pnex-203-0-113-7.sslip.io
+                              nip    ->  pnex-203-0-113-7.nip.io
                             (public wildcard DNS that answers with the embedded IP).
   --ip ADDR                 IPv4 embedded in a sslip/nip name (default: the address of
-                            the interface holding the default route).
+                            the interface holding the default route; pass the public
+                            IP when the VM sits behind NAT).
   --tls local|cloud         local (default): private CA generated on this host.
                             cloud: Let's Encrypt (ports 80/443 reachable from the
                             internet, --domain and --acme-email required).
@@ -310,7 +311,7 @@ resolve_settings() {
         embedded=${embedded%%.*}
         embedded=${embedded//-/.}
         if [[ $TLS_MODE == cloud ]] && is_private_ip "$embedded"; then
-            die "$DOMAIN points to a private address: Let's Encrypt cannot reach it, use --tls=local"
+            die "$DOMAIN points to a private address: Let's Encrypt cannot reach it. Pass the public IP (--ip) or use --tls=local"
         fi
         info "wildcard DNS: $DOMAIN -> $embedded (needs internet DNS on clients and devices)"
     fi

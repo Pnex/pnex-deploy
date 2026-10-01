@@ -30,21 +30,29 @@ job) is picked automatically. Prefer an SSD to the SD card.
 
 The same command on Debian 12/13 or Ubuntu 22.04+ (bare metal, Proxmox,
 VirtualBox, any cloud VM). Docker Engine and the compose plugin are
-installed when missing. On a LAN VM, a [sslip.io name](#names-and-tls) avoids
-any DNS setup:
+installed when missing.
+
+On a public VM **without a domain name**, a [sslip.io name](#names-and-tls)
+built from the VM's public IP gets a Let's Encrypt certificate (ports 80 and
+443 open to the internet; `--ip` is needed when the VM only sees a private
+address behind the provider's NAT):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
-  | sudo bash -s -- --domain sslip --admin-user admin@acme.io
+  | sudo bash -s -- --domain sslip --ip 203.0.113.7 --tls cloud \
+      --acme-email ops@example.com --admin-user admin@example.com
 ```
 
-On a public VM with a DNS name, use Let's Encrypt:
+With your own DNS record:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pnex/pnex-deploy/main/install.sh \
   | sudo bash -s -- --domain pnex.example.com --tls cloud --acme-email ops@example.com \
       --admin-user admin@example.com
 ```
+
+On a LAN, the default `<hostname>.local` name and the local CA apply, as on
+a Raspberry Pi.
 
 ### Windows (WSL 2)
 
@@ -100,7 +108,7 @@ Details, scaling and upgrades: [helm/README.md](helm/README.md).
 | Board / CPU | Raspberry Pi 4 (4 GB), any amd64/arm64 | Raspberry Pi 5 (8 GB) or a small x86 box |
 | OS | Raspberry Pi OS Lite 64-bit (bookworm/trixie), Debian 12/13, Ubuntu 22.04+ | Debian 13 / Pi OS trixie |
 | Disk | 16 GB free | an **SSD** (USB 3 or NVMe) rather than the SD card |
-| Network | LAN with mDNS, internet DNS (sslip.io) or a DNS name | a DHCP reservation for the server |
+| Network | LAN with mDNS, a DNS name, or a public IP (sslip.io) | a DHCP reservation for the server |
 
 32-bit Raspberry Pi OS is **not** supported (images are `linux/amd64` and
 `linux/arm64` only). Docker Engine and the compose plugin are installed
@@ -137,13 +145,21 @@ server, and the certificate must carry it. Four ways to get one:
 | `--domain` | Name | Resolution | TLS | When |
 |---|---|---|---|---|
 | *(default)* | `<hostname>.local` | mDNS on the LAN (avahi) | local CA | Raspberry Pi / Linux on a home or lab LAN |
-| `sslip` or `nip` | `pnex-192-168-1-20.sslip.io` | public wildcard DNS, answers with the IP embedded in the name | local CA (private IP) or Let's Encrypt (public IP, `--tls cloud`) | no domain, mDNS unavailable (WSL, Android < 12, DNS-over-HTTPS browsers, VLANs), cloud VM without DNS |
+| `sslip` or `nip` | `pnex-203-0-113-7.sslip.io` | public wildcard DNS, answers with the IP embedded in the name | Let's Encrypt (`--tls cloud`) | **public VM without a domain name**: a trusted certificate with no DNS to manage |
 | `pnex.example.com` | your DNS record | your DNS | Let's Encrypt (`--tls cloud`) or local CA | production, public access |
 | `192.168.1.20` | bare IP | none | local CA | last resort: passkeys unavailable (WebAuthn refuses IPs) |
 
 [sslip.io](https://sslip.io) and [nip.io](https://nip.io) are free services:
-`pnex-192-168-1-20.sslip.io` resolves to `192.168.1.20`. The dashed form keeps
-the name a single label, which certificates handle best. Limits to know:
+`pnex-203-0-113-7.sslip.io` resolves to `203.0.113.7`. Their point is
+**Let's Encrypt without DNS**: give a public VM such a name and it gets a
+certificate every browser, app and device already trusts — no CA to import.
+The dashed form keeps the name a single label, which certificates handle
+best.
+
+With a **private** IP they still work, with the local CA: the only gain
+over a bare IP is a real host name where mDNS fails (WSL, Android < 12,
+DNS-over-HTTPS browsers, VLANs), which keeps passkeys usable. That is why
+the installer uses `sslip` by default on WSL. Limits to know:
 
 - clients and devices need internet DNS (a fully offline LAN needs mDNS or
   your own DNS);
@@ -311,7 +327,7 @@ has no Web Serial). On Ubuntu run `client/setup-ubuntu.sh` once (above); it:
   did not log out and back in.
 - **`<hostname>.local` does not resolve** — Android (before 12) and some
   browsers with DNS-over-HTTPS ignore mDNS. Use a DHCP reservation and either
-  `--domain sslip` (see [Names and TLS](#names-and-tls)), a router DNS name
+  a router DNS name
   (`--domain pnex.home`) or the IP address (`--domain 192.168.1.20`; passkeys
   are then unavailable, passwords work).
 - **A sslip.io / nip.io name does not resolve on the LAN** — the router's
