@@ -1,3 +1,8 @@
 # Generated at install time — never commit (secrets, CA private key).
 .env
 state/
+# Local cluster values and credentials (secrets): never commit.
+helm/values-*.yaml
+helm/.password
+regcred.yaml
+.idea/

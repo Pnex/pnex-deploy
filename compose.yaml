@@ -40,6 +40,17 @@ x-pnex-env: &pnex-env
   PNEX_FLOW_RUNTIME_TOKEN: ${PNEX_FLOW_RUNTIME_TOKEN:?run install.sh}
   # Secrets vault keyring: the server refuses to start without it.
   PNEX_SECRETS_KEYS: ${PNEX_SECRETS_KEYS:?run install.sh}
+  # Rate limiting (OAuth bridge, agent enrolment, device websockets, public
+  # tours). The client IP is read from X-Forwarded-For only when the peer
+  # is in PNEX_TRUSTED_PROXIES: here, nginx on the internal network only.
+  PNEX_RATE_LIMIT: ${PNEX_RATE_LIMIT:-on}
+  PNEX_TRUSTED_PROXIES: ${PNEX_TRUSTED_PROXIES:-${PNEX_NET_SUBNET:-172.30.66.0/24}}
+  # Custom firmware IDE: off by default (user C++ compiled on the builder).
+  # The builder image has no bubblewrap sandbox: enable it only when every
+  # user is trusted (PNEX_FIRMWARE_CUSTOM_ENABLED=true +
+  # PNEX_FIRMWARE_SANDBOX=none).
+  PNEX_FIRMWARE_CUSTOM_ENABLED: ${PNEX_FIRMWARE_CUSTOM_ENABLED:-false}
+  PNEX_FIRMWARE_SANDBOX: ${PNEX_FIRMWARE_SANDBOX:-bwrap}
   # Firmware artefacts: `db` (Postgres) or `s3` (RustFS). Media: `fs`
   # (the /data volume) or `s3`. Chosen once at install time.
   STORAGE_BACKEND: ${STORAGE_BACKEND:-db}
@@ -109,14 +120,16 @@ services:
       timeout: 5s
       retries: 10
 
-  # Last-point cache for the pnex-device-read flow node. Pure cache: no
-  # persistence at all (zero disk writes), OpenObserve stays the source of
-  # truth.
+  # Device presence leases (anti-clone, D108), device command bus, live
+  # last-value cache and org memory. No persistence at all (zero disk
+  # writes): after a restart the server rebuilds its state. Eviction is
+  # `volatile-lru` (keys with a TTL only): `allkeys-lru` could evict the
+  # presence index and mark the whole fleet offline.
   valkey:
     image: valkey/valkey:9-alpine
     restart: unless-stopped
     logging: *logging
-    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${VALKEY_MAXMEMORY:-128mb}", "--maxmemory-policy", "allkeys-lru", "--loglevel", "warning"]
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${VALKEY_MAXMEMORY:-128mb}", "--maxmemory-policy", "volatile-lru", "--loglevel", "warning"]
     networks: [pnex]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
@@ -306,6 +319,9 @@ services:
     image: ${PNEX_IMAGE_REGISTRY:-docker.io/shanisma}/pnex-server-rs:${PNEX_TAG:?run install.sh}
     restart: unless-stopped
     logging: *logging
+    # Clean shutdown drains the flow runtime, flushes the last telemetry
+    # batch to OpenObserve and releases singleton leases (~30 s worst case).
+    stop_grace_period: 45s
     depends_on:
       postgres:
         condition: service_healthy
@@ -330,6 +346,7 @@ services:
     image: ${PNEX_IMAGE_REGISTRY:-docker.io/shanisma}/pnex-builder-rs:${PNEX_TAG:?run install.sh}
     restart: unless-stopped
     logging: *logging
+    stop_grace_period: 45s
     command: ["start", "--worker"]
     depends_on:
       pnex-server:

@@ -70,12 +70,19 @@ certificates) and Docker volumes for the data. `pnexctl` goes to
 | rauthy | `ghcr.io/sebadob/rauthy:0.36.2` | OpenID Connect identity provider (`/auth/v1/`). |
 | postgres | `postgres:18-alpine` | Main database. |
 | openobserve | `openobserve/openobserve:v1.0.0` | Telemetry storage. |
-| valkey | `valkey/valkey:9-alpine` | Live last-value cache, no persistence (no disk writes). |
+| valkey | `valkey/valkey:9-alpine` | Device presence leases (anti-clone), device command bus, live last-value cache. No persistence (no disk writes). |
 | rustfs (+ rustfs-init) | `rustfs/rustfs:1.0.0-rc.2`, `amazon/aws-cli` | `--storage s3` only. |
 | certbot | `certbot/certbot:v4.2.0` | `--tls cloud` only. |
 
 All containers restart automatically (`unless-stopped`). See
 [Logs](#logs) for how logging is kept small.
+
+**Rate limiting.** Unauthenticated and sensitive routes (OAuth bridge,
+edge-agent enrolment, device and camera websockets, public tours) are rate
+limited per client IP (HTTP 429 + `Retry-After`). The client IP is taken
+from `X-Forwarded-For` only when the request comes from nginx on the
+internal network (`PNEX_TRUSTED_PROXIES`, default: the Docker subnet).
+`PNEX_RATE_LIMIT=off` disables it.
 
 **No usage limits.** A self-hosted install has no subscription tiers: no
 cap on devices, firmware builds or telemetry volume. Sign-in goes through
@@ -136,6 +143,22 @@ Logging is kept small on purpose, to limit SD card wear:
   overwritten; an existing `log-driver` is left alone).
 - **System journal.** On `raspi`, journald is capped at 100 MB
   (`/etc/systemd/journald.conf.d/pnex.conf`).
+
+### Secrets vault key
+
+Organisation secrets (notification channel tokens, HTTP node credentials,
+Wi-Fi passwords, LLM keys) are encrypted in Postgres with a key ring that
+lives **outside** the database: `PNEX_SECRETS_KEYS` in `/opt/pnex/.env`,
+generated once by the installer (`pnex-server` refuses to start without
+it). A database dump alone reveals no secret, but a database restored
+without its key ring is unreadable: `pnexctl backup` saves `.env` with the
+dump, keep both.
+
+Rotation: generate a key (`openssl rand -base64 32`), put it **first** in
+the user overrides of `.env`, keeping the old one after it
+(`PNEX_SECRETS_KEYS='k2:<new>,k1:<old>'`), `sudo pnexctl start`, then run
+the re-encryption from the platform status page in the web UI. Remove the
+old key once the page reports no secret left under it.
 
 **Backups**: `config.tar.gz` contains the local CA **private key** — firmware
 flashed on your devices pins that CA, so losing it means re-flashing every
@@ -219,7 +242,7 @@ config/rauthy/          identity provider config + bootstrap templates, branding
 scripts/pnexctl         day-2 helper
 client/setup-ubuntu.sh  client laptop setup (USB serial + CA trust)
 tests/                  compose validation used by CI
-helm/                   Kubernetes chart (coming later)
+helm/pnex/              Kubernetes chart (see helm/README.md)
 ```
 
 Development and testing happen in the main PNeX repository, which contains a
