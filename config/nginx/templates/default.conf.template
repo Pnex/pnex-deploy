@@ -23,6 +23,14 @@ resolver 127.0.0.11 valid=10s ipv6=off;
 access_log off;
 error_log /dev/stderr error;
 
+# Devices authenticate their websockets with `?token=` (/ws/device,
+# /ws/camera) and OAuth callbacks carry `?code=`: if you turn the access
+# log on, use this query-free format (`access_log /dev/stdout pnex_noqs;`
+# inside a server block), never the default `combined`.
+log_format pnex_noqs '$remote_addr - $remote_user [$time_local] '
+                     '"$request_method $uri $server_protocol" $status '
+                     '$body_bytes_sent "$http_user_agent"';
+
 # Port 80: ACME HTTP-01 challenges (cloud mode), container health probe,
 # everything else redirected to https.
 server {
@@ -90,6 +98,9 @@ server {
 
     # Device + UI websockets: long-lived, idle between frames.
     location /ws/ {
+        # nginx error lines quote the full request (`?token=`): keep only
+        # crit here; a failing upstream still answers 502 to the device.
+        error_log /dev/stderr crit;
         proxy_pass http://$pnex_backend;
         proxy_buffering off;
         proxy_read_timeout 1h;

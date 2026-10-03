@@ -7,20 +7,7 @@ metadata:
   labels:
     {{- include "pnex.labels" . | nindent 4 }}
   annotations:
-    {{- if not .Values.ingress.tls }}
-    # TLS terminated upstream (Cloudflare...): no http -> https redirect loop.
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    {{- end }}
-    # Media uploads (360 captures, firmware artefacts): the API enforces its
-    # own limits.
-    nginx.ingress.kubernetes.io/proxy-body-size: 1g
-    # Device + UI websockets and Rauthy SSE: long-lived, idle between frames.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-    {{- with .Values.ingress.annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+    {{- include "pnex.ingressAnnotations" . | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- with .Values.ingress.tls }}
@@ -41,6 +28,47 @@ spec:
                 name: {{ $fullname }}-rauthy
                 port: { name: http }
           - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-api
+                port: { name: http }
+---
+# Device websockets on their own Ingress: they authenticate with
+# `?token=` (/ws/device, /ws/camera), which a controller's access log
+# would write in clear. Their access log is switched off per route where
+# the controller allows it (ingress-nginx, Traefik ≥ 3.1); for other
+# controllers (HAProxy...) use a query-free log format controller-wide
+# (see the chart README).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-ws
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  annotations:
+    {{- include "pnex.ingressAnnotations" . | nindent 4 }}
+    {{- if not .Values.ingress.wsAccessLog }}
+    {{- if contains "nginx" .Values.ingress.className }}
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
+    {{- else if contains "traefik" .Values.ingress.className }}
+    traefik.ingress.kubernetes.io/router.observability.accesslogs: "false"
+    {{- end }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- range . }}
+    - secretName: {{ .secretName }}
+      hosts: [{{ $.Values.publicHost | quote }}]
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.publicHost | quote }}
+      http:
+        paths:
+          - path: /ws/
             pathType: Prefix
             backend:
               service:

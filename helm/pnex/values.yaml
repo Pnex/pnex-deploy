@@ -214,6 +214,11 @@ ingress:
   enabled: true
   className: nginx
   annotations: {}
+  # Access log of the device websockets (/ws/*, on their own Ingress). They
+  # authenticate with `?token=`: off by default so tokens never reach the
+  # controller logs (ingress-nginx, Traefik ≥ 3.1 — other controllers: see
+  # the chart README).
+  wsAccessLog: false
   # TLS terminated by the ingress. Leave empty when TLS is terminated
   # upstream (Cloudflare proxy, external load balancer).
   tls: []

@@ -156,3 +156,21 @@ securityContext:
   seccompProfile:
     type: RuntimeDefault
 {{- end -}}
+
+{{/* Ingress annotations shared by the main and the websocket Ingress. */}}
+{{- define "pnex.ingressAnnotations" -}}
+{{- if not .Values.ingress.tls }}
+# TLS terminated upstream (Cloudflare...): no http -> https redirect loop.
+nginx.ingress.kubernetes.io/ssl-redirect: "false"
+{{- end }}
+# Media uploads (360 captures, firmware artefacts): the API enforces its
+# own limits.
+nginx.ingress.kubernetes.io/proxy-body-size: 1g
+# Device + UI websockets and Rauthy SSE: long-lived, idle between frames.
+nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+nginx.ingress.kubernetes.io/proxy-buffering: "off"
+{{- with .Values.ingress.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}

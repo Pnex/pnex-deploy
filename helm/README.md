@@ -46,6 +46,17 @@ a database restored without it holds unreadable secrets.
   ranges to `api.rateLimit.trustedProxies` so the limit applies per client.
 - Sign-in is authorization code + PKCE only (no password grant).
 - The custom firmware IDE is off (`customFirmware.enabled`).
+- Device tokens stay out of the ingress logs. Devices open their websockets
+  with `?token=`, so `/ws/*` gets its own Ingress (`<release>-ws`) with its
+  access log switched off (`ingress.wsAccessLog: false`):
+  - **ingress-nginx**: `nginx.ingress.kubernetes.io/enable-access-log`.
+  - **Traefik ≥ 3.1**: `traefik.ingress.kubernetes.io/router.observability.accesslogs`.
+  - **HAProxy and other controllers** have no per-route switch: log paths
+    without their query string controller-wide, e.g. a HAProxy
+    `log-format` that uses `%HPO` (path only) instead of `%r` / `%HU`.
+  - Error logs: nginx-based controllers quote the full request line in
+    upstream errors; keep their error log level above `error` or ship it
+    to a store with restricted access.
 
 ## Scaling
 
