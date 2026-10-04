@@ -336,6 +336,11 @@ services:
         required: false
     environment:
       <<: *pnex-env
+      # LAN range(s) the "Detect PNeX servers" scan probes, e.g. `192.168.1.`
+      # (comma-separated). Optional: by default the scan uses the /24 of the
+      # address the browser reached PNeX at; set it when users open PNeX by
+      # name (pnex.local) — the container only sees Docker bridges.
+      PNEX_LAN_PREFIX: ${PNEX_LAN_PREFIX:-}
     volumes:
       - appdata:/data
       - ./state/pki:/pki:ro
