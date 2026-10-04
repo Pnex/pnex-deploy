@@ -370,6 +370,7 @@ config/pki/             local CA / certificate issuance (one-shot container)
 config/certbot/         Let's Encrypt loop (cloud mode)
 config/rauthy/          identity provider config + bootstrap templates, branding
 scripts/pnexctl         day-2 helper
+scripts/release.sh      cut a release: pins VERSION + the Helm appVersion, tags v<version>
 client/setup-ubuntu.sh  client laptop setup (USB serial + CA trust)
 tests/                  compose validation used by CI
 helm/pnex/              Kubernetes chart (see helm/README.md)
