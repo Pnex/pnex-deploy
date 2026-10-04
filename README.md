@@ -13,6 +13,12 @@ Pick the installation that matches your hardware:
 Every Docker install is TLS everywhere. Without a domain name, PNeX still
 gets a real host name and HTTPS: see [Names and TLS](#names-and-tls).
 
+To install a given release instead of the last green `main`, add
+`--version` (for example `--version 0.1.0-beta.1`; releases are listed on
+[GitHub](https://github.com/Pnex/pnex-rs/releases)). The install keeps that
+release on upgrades; `pnexctl upgrade --version …` moves to another one,
+`--version latest` back to `main`.
+
 ### Raspberry Pi
 
 ```bash
