@@ -84,7 +84,7 @@ Behaviour
   --non-interactive, -y     Never prompt.
   --dry-run                 Render everything into a temporary directory, change
                             nothing on the system, do not start containers.
-  --force                   Allow risky changes (storage backend switch).
+  --force                   Allow risky changes (storage backend switch, low disk space).
   --timeout SECONDS         Health wait budget (default 600).
   -h, --help                This help.
 EOF
@@ -520,6 +520,30 @@ configure_host_logging() {
     fi
 }
 
+# Free space for the images before pulling them: the firmware builder alone
+# is ~8 GB once extracted, a pull that runs out of space half-way leaves a
+# broken install. First install: 16 GB (README "Requirements"); upgrade:
+# 8 GB (the old images are still on disk until pruned). --force skips it.
+check_disk_space() {
+    ((DRY_RUN || NO_PULL)) && return 0
+    local root need avail_kb
+    root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
+    [[ -d $root ]] || root=/var/lib
+    if ((FIRST_INSTALL)); then need=16; else need=8; fi
+    avail_kb=$(df --output=avail -k "$root" 2>/dev/null | tail -1 | tr -d ' ')
+    [[ $avail_kb =~ ^[0-9]+$ ]] || return 0
+    local avail_gb=$((avail_kb / 1024 / 1024))
+    if ((avail_gb < need)); then
+        if ((FORCE)); then
+            warn "only ${avail_gb} GB free on $root (${need} GB needed): continuing (--force)"
+        else
+            die "only ${avail_gb} GB free on $root, ${need} GB needed for the images (the firmware builder alone is ~8 GB). Grow the disk, or rerun with --force."
+        fi
+    else
+        ok "disk: ${avail_gb} GB free on $root"
+    fi
+}
+
 # Directory holding this script when it is a real file (not piped).
 script_dir() {
     local src=${BASH_SOURCE[0]:-}
@@ -939,6 +963,7 @@ main() {
     install_prerequisites
     install_docker
     configure_host_logging
+    check_disk_space
     fetch_recipe
     resolve_tag
     write_env

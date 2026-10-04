@@ -107,7 +107,7 @@ Details, scaling and upgrades: [helm/README.md](helm/README.md).
 |---|---|---|
 | Board / CPU | Raspberry Pi 4 (4 GB), any amd64/arm64 | Raspberry Pi 5 (8 GB) or a small x86 box |
 | OS | Raspberry Pi OS Lite 64-bit (bookworm/trixie), Debian 12/13, Ubuntu 22.04+ | Debian 13 / Pi OS trixie |
-| Disk | 16 GB free | an **SSD** (USB 3 or NVMe) rather than the SD card |
+| Disk | 16 GB free (the firmware builder image alone is ~8 GB; the installer refuses to start below that, `--force` to override) | 30 GB+, an **SSD** (USB 3 or NVMe) rather than the SD card |
 | Network | LAN with mDNS, a DNS name, or a public IP (sslip.io) | a DHCP reservation for the server |
 
 32-bit Raspberry Pi OS is **not** supported (images are `linux/amd64` and
