@@ -71,8 +71,12 @@ Mail (optional — without it, self-registration and password-reset mails are of
 
 Versions / source
   --tag TAG                 Image tag (default: the VERSION file of the recipe).
-  --ref REF                 Recipe git ref (branch, tag or commit; default main).
-  --version REF             Alias of --ref.
+  --version VERSION         Release to install: latest (default — recipe of main,
+                            moving images) or a release such as 0.1.0-beta.1
+                            (recipe tag v0.1.0-beta.1, images pinned by its
+                            VERSION). Kept for upgrades.
+  --ref REF                 Recipe git ref (branch, tag or commit; overrides
+                            --version; default main).
   --source auto|local|remote  Where the recipe comes from: remote = GitHub tarball
                             of --ref; local = the directory holding this script.
                             auto (default): local when run from a checkout.
@@ -94,7 +98,7 @@ EOF
 F_ADMIN_USER="" F_ADMIN_PASSWORD="" F_DOMAIN="" F_TLS="" F_ACME_EMAIL=""
 F_IP="" F_ACME_STAGING="" F_HTTP_PORT="" F_HTTPS_PORT="" F_PROFILE="" F_STORAGE=""
 F_SMTP_URL="" F_SMTP_PORT="" F_SMTP_USER="" F_SMTP_PASSWORD="" F_SMTP_FROM=""
-F_TAG="" F_REF="" F_SOURCE="auto" F_HOME="" F_REGISTRY=""
+F_TAG="" F_REF="" F_VERSION="" F_SOURCE="auto" F_HOME="" F_REGISTRY=""
 NO_PULL=0 NON_INTERACTIVE=0 DRY_RUN=0 FORCE=0 WAIT_SECS=600
 
 parse_args() {
@@ -135,7 +139,8 @@ parse_args() {
             --smtp-password) F_SMTP_PASSWORD=$val ;;
             --smtp-from) F_SMTP_FROM=$val ;;
             --tag) F_TAG=$val ;;
-            --ref | --version) F_REF=$val ;;
+            --ref) F_REF=$val ;;
+            --version) F_VERSION=$val ;;
             --source) F_SOURCE=$val ;;
             --home) F_HOME=$val ;;
             --registry) F_REGISTRY=$val ;;
@@ -226,6 +231,20 @@ is_docker_desktop() {
 
 # `sslip` / `nip` -> pnex-a-b-c-d.sslip.io / .nip.io. Dashes, not dots:
 # the name stays a single label under the service domain.
+# --version -> recipe ref: latest = main; 0.1.0-beta.1 (or v0.1.0-beta.1)
+# = the release tag v0.1.0-beta.1. Empty in, empty out.
+version_ref() { # $1 = --version value
+    local v=$1
+    [[ -z $v ]] && return 0
+    if [[ $v == latest ]]; then
+        printf 'main'
+    elif [[ $v =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+        printf 'v%s' "${v#v}"
+    else
+        die "--version: expected latest or a release such as 0.1.0-beta.1, got '$v'"
+    fi
+}
+
 magic_domain() { # $1 = sslip | nip
     local ip suffix
     case $1 in sslip) suffix=sslip.io ;; nip) suffix=nip.io ;; esac
@@ -369,7 +388,10 @@ resolve_settings() {
     fi
     [[ "$SMTP_PASSWORD$SMTP_FROM$SMTP_USERNAME" == *"'"* ]] && die "SMTP values cannot contain a single quote"
 
-    REF=$(pick "$F_REF" "$(old PNEX_REF)" main)
+    # Validated outside the command substitution: die there would only end
+    # the subshell.
+    version_ref "$F_VERSION" >/dev/null || exit 1
+    REF=$(pick "$F_REF" "$(version_ref "$F_VERSION")" "$(old PNEX_REF)" main)
     REGISTRY=$(pick "$F_REGISTRY" "$(old PNEX_IMAGE_REGISTRY)" docker.io/shanisma)
 
     info "arch $ARCH, profile $PROFILE, storage $STORAGE, TLS $TLS_MODE"

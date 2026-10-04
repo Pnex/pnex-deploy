@@ -15,10 +15,11 @@ pnexctl — manage the PNeX stack (install dir: $PNEX_HOME, default /opt/pnex)
   logs [SERVICE...] [-f]    Container logs (last 200 lines; -f to follow)
   restart [SERVICE...]      Restart services (all when none given)
   stop | start              Stop / start the whole stack (data kept)
-  upgrade [TAG] [--local] [-- INSTALL_FLAGS...]
+  upgrade [TAG] [--version VERSION] [--local] [-- INSTALL_FLAGS...]
                             Fetch the latest recipe (ref from .env) and move to TAG
-                            (default: the recipe's VERSION). --local re-runs the
-                            installer already in the install dir (no download).
+                            (default: the recipe's VERSION). --version moves to a
+                            release (0.1.0-beta.1) or back to latest. --local re-runs
+                            the installer already in the install dir (no download).
   backup [--dir DIR] [--volumes]
                             pg_dump + .env + PKI (CA key!) into DIR (default
                             /var/backups/pnex). --volumes also archives every data
@@ -101,10 +102,12 @@ cmd_start() { need_root start; check_install; compose up -d; }
 cmd_upgrade() {
     need_root upgrade
     check_install
-    local tag="" local_run=0 extra=()
+    local tag="" version="" local_run=0 extra=()
     while (($#)); do
         case $1 in
             --local) local_run=1 ;;
+            --version) version=${2:?--version needs a value}; shift ;;
+            --version=*) version=${1#*=} ;;
             --) shift; extra=("$@"); break ;;
             -*) die "unknown upgrade flag '$1'" ;;
             *) tag=$1 ;;
@@ -114,6 +117,14 @@ cmd_upgrade() {
     local args=(--non-interactive --home "$PNEX_HOME")
     [[ -n $tag ]] && args+=(--tag "$tag")
     args+=("${extra[@]}")
+    if [[ -n $version ]]; then
+        # A version change: the installer of main resolves it to its recipe
+        # tag (install.sh version_ref) and records the new ref.
+        echo "Fetching installer $REPO_SLUG@main (--version $version)"
+        curl -fsSL "https://raw.githubusercontent.com/$REPO_SLUG/main/install.sh" |
+            bash -s -- --source remote --version "$version" "${args[@]}"
+        return
+    fi
     if ((local_run)); then
         bash "$PNEX_HOME/install.sh" --source local "${args[@]}"
     else

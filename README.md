@@ -128,12 +128,13 @@ automatically when missing.
 | `--storage fs\|s3` | `fs` | `fs`: firmware artefacts in Postgres, media on a Docker volume. `s3`: adds RustFS (S3-compatible) for both. Chosen once. |
 | `--smtp-url HOST`, `--smtp-port`, `--smtp-user`, `--smtp-password`, `--smtp-from` | | Optional outgoing mail. Without SMTP, self-registration and password-reset mails are disabled; the admin creates users in the Rauthy admin UI. |
 | `--tag TAG` | `VERSION` file (`latest`) | Image tag of `pnex-server-rs` / `pnex-builder-rs`. `latest` follows the last green `main`; pin `main-<sha>` for reproducible installs. |
-| `--ref REF` (`--version REF`) | `main` | Git ref of this recipe (branch, tag or commit). |
+| `--version VERSION` | `latest` | Release to install. `latest`: recipe of `main`, images following the last green `main`. A release such as `0.1.0-beta.1`: recipe tag `v0.1.0-beta.1`, images pinned to `0.1.0-beta.1`. Kept for upgrades (`pnexctl upgrade --version …` to move). |
+| `--ref REF` | `main` | Git ref of this recipe (branch, tag or commit); overrides `--version`. |
 | `--http-port`, `--https-port` | `80`, `443` | Published ports. Keep the defaults in production. |
 | `--home DIR` | `/opt/pnex` | Install directory. |
 | `--non-interactive`, `-y` | | Never prompt. |
 | `--dry-run` | | Render the configuration into a temporary directory and validate it; changes nothing. |
-| `--force` | | Allow a storage backend switch (no data migration!). |
+| `--force` | | Allow a storage backend switch (no data migration!), or an install below the disk space minimum. |
 
 Run `install.sh --help` for the complete list.
 
