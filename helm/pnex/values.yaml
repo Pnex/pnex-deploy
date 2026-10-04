@@ -150,9 +150,12 @@ valkey:
 # ── Rauthy (OpenID Connect provider, served on /auth/v1/) ───────────────
 rauthy:
   image: ghcr.io/sebadob/rauthy:0.36.2
-  # Pod CIDR of the ingress controller: Rauthy trusts X-Forwarded-For only
-  # from these ranges (newline separated). microk8s/calico default below.
-  trustedProxies: "10.1.0.0/16"
+  # Ranges Rauthy trusts X-Forwarded-For from (newline separated): the pod
+  # CIDR of the ingress controller and of the chart's own jobs. Default: the
+  # private ranges, which cover every CNI (k3s 10.42/16, microk8s 10.1/16,
+  # kind 10.244/16...). Narrow it to the pod CIDR on a shared cluster.
+  # Untrusted peers get "Invalid IP Address" (login broken).
+  trustedProxies: "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16"
   # Header carrying the real client IP when a CDN sits in front of the
   # ingress (e.g. "CF-Connecting-IP" behind Cloudflare). Without it, sessions
   # are bound to the CDN edge IP, which changes between requests and breaks

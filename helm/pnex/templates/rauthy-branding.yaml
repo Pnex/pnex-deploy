@@ -46,7 +46,12 @@ spec:
             - -c
             - |
               set -e
-              until curl -sf -o /dev/null "$BASE/.well-known/openid-configuration"; do
+              # Rauthy runs in PROXY_MODE: a request without a client address
+              # header is refused ("Invalid IP Address"), as from any peer
+              # outside rauthy.trustedProxies. This job talks to it directly,
+              # not through the ingress.
+              rcurl() { curl -H 'X-Forwarded-For: 127.0.0.1' "$@"; }
+              until rcurl -sf -o /dev/null "$BASE/.well-known/openid-configuration"; do
                 echo "rauthy not ready, retrying..."; sleep 3
               done
               # Kubernetes reduces "$$" to "$" in command args: build the
@@ -55,11 +60,11 @@ spec:
               auth="Authorization: API-Key pnex-install${dollar}${API_KEY_SECRET}"
               for c in pnex rauthy; do
                 sed "s/\"client_id\": \"pnex\"/\"client_id\": \"$c\"/" /branding/theme.json >/tmp/theme.json
-                curl -sfS -o /dev/null -X PUT -H "$auth" -H 'Content-Type: application/json' \
+                rcurl -sfS -o /dev/null -X PUT -H "$auth" -H 'Content-Type: application/json' \
                   --data-binary @/tmp/theme.json "$BASE/theme/$c"
-                curl -sfS -o /dev/null -X PUT -H "$auth" \
+                rcurl -sfS -o /dev/null -X PUT -H "$auth" \
                   -F "image=@/branding/logo-card.png;type=image/png" "$BASE/clients/$c/logo"
-                curl -sfS -o /dev/null -X PUT -H "$auth" \
+                rcurl -sfS -o /dev/null -X PUT -H "$auth" \
                   -F "image=@/branding/logo-mark.png;type=image/png" "$BASE/clients/$c/favicon"
               done
               echo "Rauthy login pages branded"
