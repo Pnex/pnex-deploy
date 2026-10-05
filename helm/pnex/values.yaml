@@ -84,6 +84,9 @@ imagePullSecrets: []
 # ── pnex-server (HTTP API, websockets, web UI, flow runtime) ────────────
 api:
   replicas: 1
+  # Firmware always targets publicHost and users cannot register another
+  # PNeX server (PNEX_PROD_HOST): a Kubernetes install is one public server.
+  lockServerHost: true
   # Deployment mode: `self_hosted` (no subscription tiers) or `saas`.
   deploymentMode: self_hosted
   defaultRetentionDays: 30

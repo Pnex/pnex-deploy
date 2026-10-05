@@ -38,6 +38,10 @@ x-pnex-env: &pnex-env
   VALKEY_URL: redis://valkey:6379
   PNEX_NOTIFY_INTERNAL_TOKEN: ${PNEX_NOTIFY_INTERNAL_TOKEN:?run install.sh}
   PNEX_FLOW_RUNTIME_TOKEN: ${PNEX_FLOW_RUNTIME_TOKEN:?run install.sh}
+  # Server host the firmware always targets, no other one selectable (set by
+  # install.sh for a DNS / sslip / IP name; empty on a .local LAN install,
+  # where devices reach the server by IP).
+  PNEX_PROD_HOST: ${PNEX_PROD_HOST:-}
   # Secrets vault keyring: the server refuses to start without it.
   PNEX_SECRETS_KEYS: ${PNEX_SECRETS_KEYS:?run install.sh}
   # Rate limiting (OAuth bridge, agent enrolment, device websockets, public

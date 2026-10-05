@@ -344,6 +344,10 @@ resolve_settings() {
     [[ $HTTP_PORT =~ ^[0-9]+$ && $HTTPS_PORT =~ ^[0-9]+$ ]] || die "ports must be numbers"
     PUBLIC_HOST=$DOMAIN
     [[ $HTTPS_PORT != 443 ]] && PUBLIC_HOST="$DOMAIN:$HTTPS_PORT"
+    # Firmware host locked to the public name (PNEX_PROD_HOST), except on a
+    # .local name: an ESP cannot resolve mDNS, devices reach a LAN install
+    # by its IP (picked from the referential / the LAN scan).
+    if [[ $DOMAIN == *.local ]]; then PROD_HOST=""; else PROD_HOST=$PUBLIC_HOST; fi
     if is_ip "$DOMAIN"; then RP_ID=localhost; else RP_ID=$DOMAIN; fi
     RP_ORIGIN="https://$RP_ID:$HTTPS_PORT"
 
@@ -729,6 +733,7 @@ write_env() {
         echo "PNEX_TLS_MODE='$TLS_MODE'"
         echo "PNEX_DOMAIN='$DOMAIN'"
         echo "PNEX_PUBLIC_HOST='$PUBLIC_HOST'"
+        echo "PNEX_PROD_HOST='$PROD_HOST'"
         echo "PNEX_DOMAIN_ALIAS='$DOMAIN_ALIAS'"
         echo "PNEX_EXTRA_SANS='$EXTRA_SANS'"
         echo "PNEX_RP_ID='$RP_ID'"

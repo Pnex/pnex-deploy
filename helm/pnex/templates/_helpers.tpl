@@ -58,6 +58,10 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: http://{{ $fullname }}-rauthy:8080
 - name: RAUTHY_ISSUER_URL
   value: https://{{ .Values.publicHost }}
+{{- if .Values.api.lockServerHost }}
+- name: PNEX_PROD_HOST
+  value: {{ .Values.publicHost | quote }}
+{{- end }}
 - name: OPENOBSERVE_URL
   value: http://{{ $fullname }}-openobserve:5080
 - name: OPENOBSERVE_ROOT_EMAIL
