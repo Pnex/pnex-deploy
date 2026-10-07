@@ -1,0 +1,12 @@
+{{- if .Values.deviceCa.pem }}
+# Root CA(s) pinned by wss firmware builds (PNEX_CA_CERT_FILE).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pnex.fullname" . }}-device-ca
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+data:
+  device-ca.pem: |
+    {{- .Values.deviceCa.pem | nindent 4 }}
+{{- end }}

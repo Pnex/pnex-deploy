@@ -13,6 +13,14 @@ OpenObserve, Valkey, RustFS and a PostgreSQL cluster managed by
   the ingress (`ingress.tls`) or in front of the cluster (Cloudflare, a
   load balancer). Devices need a publicly trusted certificate: the chart
   runs in `cloud` edge mode (no private CA).
+- The root CA of that certificate in `deviceCa.pem`: every firmware pins
+  it. The default is ISRG Root X1 (Let's Encrypt). Behind Cloudflare, use
+  the root of its edge certificate (GTS Root R4 today):
+  `--set-file deviceCa.pem=gts-root-r4.pem`
+  ([download](https://i.pki.goog/r4.pem)). One root only on ESP8266
+  (2047 bytes of PEM), two on ESP32 (4095); a bigger CA fails the build
+  with `build_ca_too_large`. Check which root signs your public name:
+  `openssl s_client -connect <publicHost>:443 -showcerts </dev/null`.
 - A CNI that enforces NetworkPolicies (Calico, Cilium...) for
   `networkPolicy.enabled` to have any effect.
 
@@ -65,6 +73,16 @@ organisation's flows run on exactly one pod, moved on failure or drain),
 share Valkey and RustFS, and migrate the database once under an advisory
 lock. Keep `replicas × (api.dbMaxConnections + 2)` below Postgres
 `max_connections`. Rolling updates drain the old pod before it stops.
+
+## Upgrading from 0.2.0
+
+- `deviceCa.pem` (new) is mounted into the API and the worker as
+  `PNEX_CA_CERT_FILE`: chart 0.2.0 set none, so every wss firmware build
+  failed with `build_no_ca`. Behind a CDN, set the root of its certificate
+  (see [Requirements](#requirements)), then rebuild the devices.
+- With server 0.1.0-beta.7 or later, `api.deploymentMode: self_hosted`
+  applies no subscription tier (device quotas, build interval), even to
+  organisations created while the install ran in `saas` mode.
 
 ## Upgrading from 0.1.x
 

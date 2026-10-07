@@ -80,11 +80,13 @@ spec:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - { name: data, mountPath: /data }
+            {{- include "pnex.deviceCaMount" . | nindent 12 }}
       volumes:
         # Scratch only (flow runtime artefacts, rebuilt at boot).
         - name: data
           emptyDir:
             sizeLimit: 1Gi
+        {{- include "pnex.deviceCaVolume" . | nindent 8 }}
 ---
 apiVersion: v1
 kind: Service

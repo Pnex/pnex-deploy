@@ -44,3 +44,11 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- with (include "pnex.deviceCaMount" .) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "pnex.deviceCaVolume" .) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}

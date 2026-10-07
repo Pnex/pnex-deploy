@@ -99,6 +99,11 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: {{ .Values.customFirmware.enabled | quote }}
 - name: PNEX_FIRMWARE_SANDBOX
   value: {{ .Values.customFirmware.sandbox | quote }}
+{{- if .Values.deviceCa.pem }}
+# Root CA the firmware pins over wss (D70), mounted from the device-ca ConfigMap.
+- name: PNEX_CA_CERT_FILE
+  value: /pki/device-ca.pem
+{{- end }}
 # Firmware artefacts and media both live in RustFS.
 - name: STORAGE_BACKEND
   value: s3
@@ -176,5 +181,21 @@ nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 nginx.ingress.kubernetes.io/proxy-buffering: "off"
 {{- with .Values.ingress.annotations }}
 {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/* Device CA volume mount (only when deviceCa.pem is set). */}}
+{{- define "pnex.deviceCaMount" -}}
+{{- if .Values.deviceCa.pem }}
+- { name: device-ca, mountPath: /pki, readOnly: true }
+{{- end }}
+{{- end }}
+
+{{/* Device CA volume (only when deviceCa.pem is set). */}}
+{{- define "pnex.deviceCaVolume" -}}
+{{- if .Values.deviceCa.pem }}
+- name: device-ca
+  configMap:
+    name: {{ include "pnex.fullname" . }}-device-ca
 {{- end }}
 {{- end }}
