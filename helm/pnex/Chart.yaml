@@ -4,7 +4,7 @@ description: PNeX on Kubernetes — API, job worker, Rauthy (OIDC), OpenObserve,
 type: application
 version: 0.2.0
 # Image tag of pnex-server-rs / pnex-builder-rs (continuously built from green main).
-appVersion: "latest"
+appVersion: "0.1.0-beta.6"
 home: https://pnex.io
 icon: https://pnex.io/logo.png
 sources:
