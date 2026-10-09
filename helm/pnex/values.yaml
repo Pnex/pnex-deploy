@@ -89,6 +89,10 @@ api:
   lockServerHost: true
   # Deployment mode: `self_hosted` (no subscription tiers) or `saas`.
   deploymentMode: self_hosted
+  # Subscription tier (by name) given to new organizations; empty = the
+  # server default ("Free"). Only enforced in `saas` mode; a platform admin
+  # changes an org's tier later in /admin/status.
+  defaultOrgTier: ""
   defaultRetentionDays: 30
   dbMaxConnections: 10
   # Several replicas share the flows (each org runs on exactly one pod) and

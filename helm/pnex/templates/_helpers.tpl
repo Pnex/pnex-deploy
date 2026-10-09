@@ -127,6 +127,10 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: {{ include "pnex.platformAdmins" . | quote }}
 - name: PNEX_DEPLOYMENT_MODE
   value: {{ .Values.api.deploymentMode | quote }}
+{{- with .Values.api.defaultOrgTier }}
+- name: PNEX_DEFAULT_ORG_TIER
+  value: {{ . | quote }}
+{{- end }}
 - name: PNEX_DEFAULT_RETENTION_DAYS
   value: {{ .Values.api.defaultRetentionDays | quote }}
 # TLS is terminated by a publicly trusted edge: no private CA to pin or
