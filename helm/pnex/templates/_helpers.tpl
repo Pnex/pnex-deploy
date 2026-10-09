@@ -99,10 +99,21 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: {{ .Values.customFirmware.enabled | quote }}
 - name: PNEX_FIRMWARE_SANDBOX
   value: {{ .Values.customFirmware.sandbox | quote }}
-{{- if .Values.deviceCa.pem }}
-# Root CA the firmware pins over wss (D70), mounted from the device-ca ConfigMap.
+{{- if include "pnex.deviceCaSource" . }}
+# Root CA the firmware pins over wss (D70): the device edge's generated CA,
+# else deviceCa.pem.
 - name: PNEX_CA_CERT_FILE
   value: /pki/device-ca.pem
+{{- end }}
+# Shared secret of the device edge (X-Pnex-Edge): without it the API trusts
+# no TLS / client-certificate header and refuses every device link.
+- name: PNEX_EDGE_SECRET
+  valueFrom:
+    secretKeyRef: { name: {{ $secret }}, key: edge-secret }
+{{- if .Values.deviceEdge.enabled }}
+# Device endpoint compiled into firmware and handed to edge agents (D158).
+- name: PNEX_DEVICE_HOST
+  value: {{ include "pnex.deviceHost" . | quote }}
 {{- end }}
 # Firmware artefacts and media both live in RustFS.
 - name: STORAGE_BACKEND
@@ -188,16 +199,38 @@ nginx.ingress.kubernetes.io/proxy-buffering: "off"
 {{- end }}
 {{- end }}
 
-{{/* Device CA volume mount (only when deviceCa.pem is set). */}}
+{{/* Device endpoint host (D158): deviceEdge.host, else devices.<publicHost>. */}}
+{{- define "pnex.deviceHost" -}}
+{{- .Values.deviceEdge.host | default (printf "devices.%s" .Values.publicHost) -}}
+{{- end -}}
+
+{{/* Where the CA pinned by firmware comes from: "edge" (the device edge's
+     generated CA), "configmap" (deviceCa.pem) or "" (none). */}}
+{{- define "pnex.deviceCaSource" -}}
+{{- if and .Values.deviceEdge.enabled (not .Values.deviceEdge.tls.existingSecret) -}}
+edge
+{{- else if .Values.deviceCa.pem -}}
+configmap
+{{- end -}}
+{{- end -}}
+
+{{/* Device CA volume mount (when a pinned CA exists). */}}
 {{- define "pnex.deviceCaMount" -}}
-{{- if .Values.deviceCa.pem }}
+{{- if include "pnex.deviceCaSource" . }}
 - { name: device-ca, mountPath: /pki, readOnly: true }
 {{- end }}
 {{- end }}
 
-{{/* Device CA volume (only when deviceCa.pem is set). */}}
+{{/* Device CA volume (when a pinned CA exists). */}}
 {{- define "pnex.deviceCaVolume" -}}
-{{- if .Values.deviceCa.pem }}
+{{- $source := include "pnex.deviceCaSource" . }}
+{{- if eq $source "edge" }}
+- name: device-ca
+  secret:
+    secretName: {{ include "pnex.fullname" . }}-device-edge-tls
+    items:
+      - { key: ca.crt, path: device-ca.pem }
+{{- else if eq $source "configmap" }}
 - name: device-ca
   configMap:
     name: {{ include "pnex.fullname" . }}-device-ca

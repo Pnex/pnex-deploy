@@ -9,18 +9,22 @@ OpenObserve, Valkey, RustFS and a PostgreSQL cluster managed by
 
 - Kubernetes ≥ 1.27, a default StorageClass.
 - The CloudNativePG operator.
-- An ingress controller (`ingress-nginx` by default). TLS is terminated by
-  the ingress (`ingress.tls`) or in front of the cluster (Cloudflare, a
-  load balancer). Devices need a publicly trusted certificate: the chart
-  runs in `cloud` edge mode (no private CA).
-- The root CA of that certificate in `deviceCa.pem`: every firmware pins
-  it. The default is ISRG Root X1 (Let's Encrypt). Behind Cloudflare, use
-  the root of its edge certificate (GTS Root R4 today):
-  `--set-file deviceCa.pem=gts-root-r4.pem`
-  ([download](https://i.pki.goog/r4.pem)). One root only on ESP8266
-  (2047 bytes of PEM), two on ESP32 (4095); a bigger CA fails the build
-  with `build_ca_too_large`. Check which root signs your public name:
-  `openssl s_client -connect <publicHost>:443 -showcerts </dev/null`.
+- An ingress controller (`ingress-nginx` by default) for the web UI. TLS is
+  terminated by the ingress (`ingress.tls`) or in front of the cluster
+  (Cloudflare, a load balancer).
+- A `LoadBalancer` Service provider (cloud LB, MetalLB, k3s ServiceLB) and
+  a DNS name for the **device endpoint** (`deviceEdge.host`, default
+  `devices.<publicHost>`), pointed at the external IP of
+  `<release>-device-edge`. Devices authenticate with a client certificate
+  (mTLS, D153), which an Ingress cannot forward: they connect to a
+  dedicated nginx, never through the ingress or a CDN.
+- By default the chart generates a private CA and a certificate for the
+  device endpoint (Secret `<release>-device-edge-tls`, kept across
+  upgrades): every firmware pins that CA. To use a public certificate
+  instead, set `deviceEdge.tls.existingSecret` (a `kubernetes.io/tls`
+  Secret, e.g. from cert-manager) and put its root CA in `deviceCa.pem`
+  (default ISRG Root X1). One root only on ESP8266 (2047 bytes of PEM), two
+  on ESP32 (4095); a bigger CA fails the build with `build_ca_too_large`.
 - A CNI that enforces NetworkPolicies (Calico, Cilium...) for
   `networkPolicy.enabled` to have any effect.
 
@@ -54,17 +58,12 @@ a database restored without it holds unreadable secrets.
   ranges to `api.rateLimit.trustedProxies` so the limit applies per client.
 - Sign-in is authorization code + PKCE only (no password grant).
 - The custom firmware IDE is off (`customFirmware.enabled`).
-- Device tokens stay out of the ingress logs. Devices open their websockets
-  with `?token=`, so `/ws/*` gets its own Ingress (`<release>-ws`) with its
-  access log switched off (`ingress.wsAccessLog: false`):
-  - **ingress-nginx**: `nginx.ingress.kubernetes.io/enable-access-log`.
-  - **Traefik ≥ 3.1**: `traefik.ingress.kubernetes.io/router.observability.accesslogs`.
-  - **HAProxy and other controllers** have no per-route switch: log paths
-    without their query string controller-wide, e.g. a HAProxy
-    `log-format` that uses `%HPO` (path only) instead of `%r` / `%HU`.
-  - Error logs: nginx-based controllers quote the full request line in
-    upstream errors; keep their error log level above `error` or ship it
-    to a store with restricted access.
+- Devices reach the API only through the device endpoint: TLS 1.2+, their
+  token in the `Authorization` header, a client certificate issued by
+  their organisation's CA. The endpoint adds a shared secret
+  (`secrets.edgeSecret`, generated) without which the API trusts no TLS or
+  certificate header, so a pod reaching the API Service directly cannot
+  impersonate it. Its access log is off.
 
 ## Scaling
 
@@ -73,6 +72,20 @@ organisation's flows run on exactly one pod, moved on failure or drain),
 share Valkey and RustFS, and migrate the database once under an advisory
 lock. Keep `replicas × (api.dbMaxConnections + 2)` below Postgres
 `max_connections`. Rolling updates drain the old pod before it stops.
+
+## Upgrading from 0.2.x
+
+Breaking (device security, D153–D158): every device must be **rebuilt and
+reflashed** after the upgrade; firmware built before is refused.
+
+- New device endpoint (`deviceEdge`, on by default): create the DNS record
+  of `deviceEdge.host` for the `<release>-device-edge` Service.
+- With the generated certificate, firmware now pins the device endpoint's
+  CA instead of `deviceCa.pem`.
+- New secret key `edge-secret`: with `secrets.existingSecret`, add it
+  (≥ 16 random characters).
+- The `<release>-ws` Ingress now only carries browser websockets: device
+  links arriving through it are refused.
 
 ## Upgrading from 0.2.0
 

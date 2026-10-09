@@ -1,0 +1,180 @@
+{{- if .Values.deviceEdge.enabled }}
+{{- /* Device endpoint (D153/D158): TLS with an optional client certificate
+     (any issuer — the API checks it against the org CA and its registry),
+     forwarded to the API with the edge secret. Only the device routes are
+     served; everything else answers 404. */}}
+{{- $fullname := include "pnex.fullname" . }}
+{{- $name := printf "%s-device-edge" $fullname }}
+{{- $host := include "pnex.deviceHost" . }}
+{{- $tlsSecret := .Values.deviceEdge.tls.existingSecret | default (printf "%s-tls" $name) }}
+{{- if not .Values.deviceEdge.tls.existingSecret }}
+{{- /* Generated once, then reused: firmware pins this CA, so a new one
+     would strand every flashed device until it is rebuilt. */}}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $tlsSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $tlsSecret }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  {{- if $old }}
+  {{- toYaml $old.data | nindent 2 }}
+  {{- else }}
+  {{- $ca := genCA "PneX device edge CA" 7300 }}
+  {{- $cert := genSignedCert $host nil (list $host) 3650 $ca }}
+  tls.crt: {{ $cert.Cert | b64enc }}
+  tls.key: {{ $cert.Key | b64enc }}
+  ca.crt: {{ $ca.Cert | b64enc }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+data:
+  # Rendered by the nginx image entrypoint (envsubst of PNEX_* only).
+  default.conf.template: |
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    # Off: the access log would only list device reconnects.
+    access_log off;
+    error_log /dev/stderr error;
+
+    server {
+        listen 8443 ssl;
+        server_name _;
+
+        ssl_certificate     /pki/tls.crt;
+        ssl_certificate_key /pki/tls.key;
+        # TLS 1.2 stays mandatory: ESP8266 BearSSL has no TLS 1.3.
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:pnex_tls_dev:10m;
+        ssl_verify_client optional_no_ca;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header X-Pnex-Edge ${PNEX_EDGE_SECRET};
+        # Certificate seen on this TLS link (URL-encoded PEM, empty without
+        # one): always overwritten, a client can never inject its own value.
+        proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
+
+        location = /nginx-health {
+            return 200 "ok\n";
+        }
+
+        location ~ ^/ws/(device|sensor/ingest|camera)$ {
+            # Reconnects of a fleet would flood the log at error level.
+            error_log /dev/stderr crit;
+            proxy_pass http://{{ $fullname }}-api:5150;
+            proxy_buffering off;
+            proxy_read_timeout 1h;
+            proxy_send_timeout 1h;
+        }
+
+        location ^~ /api/v1/ota/firmware/ {
+            proxy_pass http://{{ $fullname }}-api:5150;
+            proxy_read_timeout 300s;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "device-edge") | nindent 4 }}
+spec:
+  replicas: {{ .Values.deviceEdge.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "device-edge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "device-edge") | nindent 8 }}
+      annotations:
+        # Roll the pods when the nginx configuration changes.
+        checksum/config: {{ .Values.deviceEdge | toJson | sha256sum | trunc 16 }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: nginx
+          image: {{ .Values.deviceEdge.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            - name: PNEX_EDGE_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: edge-secret }
+            - { name: NGINX_ENVSUBST_FILTER, value: "^PNEX_" }
+          ports:
+            - { name: https, containerPort: 8443 }
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: https, scheme: HTTPS }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /nginx-health, port: https, scheme: HTTPS }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.deviceEdge.resources | nindent 12 }}
+          volumeMounts:
+            - { name: templates, mountPath: /etc/nginx/templates, readOnly: true }
+            - { name: tls, mountPath: /pki, readOnly: true }
+      volumes:
+        - name: templates
+          configMap:
+            name: {{ $name }}
+        - name: tls
+          secret:
+            secretName: {{ $tlsSecret }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  {{- with .Values.deviceEdge.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.deviceEdge.service.type }}
+  {{- with .Values.deviceEdge.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- if eq .Values.deviceEdge.service.type "LoadBalancer" }}
+  # Keep the device's address (X-Real-IP, rate limits) instead of the node's.
+  externalTrafficPolicy: Local
+  {{- end }}
+  selector:
+    {{- include "pnex.selector" (list . "device-edge") | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.deviceEdge.service.port }}
+      targetPort: https
+{{- end }}

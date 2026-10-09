@@ -7,6 +7,12 @@ PNeX is deploying on https://{{ .Values.publicHost }}/
   Password (first Rauthy start only, then change it from the account page):
     kubectl -n {{ .Release.Namespace }} get secret {{ include "pnex.secretName" . }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
 
+{{- if .Values.deviceEdge.enabled }}
+  Device endpoint: point the DNS name {{ include "pnex.deviceHost" . }} at the external IP of
+    kubectl -n {{ .Release.Namespace }} get svc {{ include "pnex.fullname" . }}-device-edge
+  then rebuild and flash the devices (firmware pins its CA).
+{{- end }}
+
   Rauthy admin UI: https://{{ .Values.publicHost }}/auth/v1/admin
 
   Back up the secrets vault keyring with your database backups (org

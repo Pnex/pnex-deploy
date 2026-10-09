@@ -34,12 +34,9 @@ spec:
                 name: {{ $fullname }}-api
                 port: { name: http }
 ---
-# Device websockets on their own Ingress: they authenticate with
-# `?token=` (/ws/device, /ws/camera), which a controller's access log
-# would write in clear. Their access log is switched off per route where
-# the controller allows it (ingress-nginx, Traefik ≥ 3.1); for other
-# controllers (HAProxy...) use a query-free log format controller-wide
-# (see the chart README).
+# Websockets on their own Ingress (no access log by default: the
+# browser's notification socket reconnects often). Devices never come this
+# way: they use the device endpoint (templates/device-edge.yaml).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

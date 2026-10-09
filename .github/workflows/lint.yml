@@ -47,3 +47,8 @@ jobs:
           helm template pnex helm/pnex --set admin.email=admin@example.com >/dev/null
           helm template pnex helm/pnex --set admin.email=admin@example.com \
             --set api.replicas=3 --set networkPolicy.enabled=false >/dev/null
+          # Device edge: public certificate, then disabled.
+          helm template pnex helm/pnex --set admin.email=admin@example.com \
+            --set deviceEdge.tls.existingSecret=devices-tls >/dev/null
+          helm template pnex helm/pnex --set admin.email=admin@example.com \
+            --set deviceEdge.enabled=false >/dev/null

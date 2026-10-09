@@ -57,6 +57,10 @@ secrets:
   # Bootstrap API key secret (>= 64 alphanumeric chars), used by the
   # branding job: `Authorization: API-Key pnex-install$<secret>`.
   rauthyApiKeySecret: ""
+  # Shared secret the device edge adds to every request (`X-Pnex-Edge`):
+  # the API trusts the edge's TLS and client-certificate headers only with
+  # it (>= 16 chars). Generated when empty.
+  edgeSecret: ""
 
 # ── Outgoing mail (Rauthy: account activation, password reset) ─────────
 smtp:
@@ -119,8 +123,9 @@ customFirmware:
   sandbox: bwrap
 
 # ── Device CA (firmware wss pin, D70) ───────────────────────────────────
-# PEM of the root CA that signs the certificate devices see on publicHost
-# (the ingress, or the CDN in front of it): every firmware pins it. Default:
+# PEM of the root CA that signs the device endpoint's certificate when it
+# is a public one (deviceEdge.tls.existingSecret): every firmware pins it.
+# Unused with the generated device edge certificate (its own CA is pinned). Default:
 # ISRG Root X1 (Let's Encrypt, e.g. cert-manager). Behind Cloudflare, pin
 # the root of its edge certificate instead (GTS Root R4 today):
 #   --set-file deviceCa.pem=gts-root-r4.pem
@@ -263,15 +268,46 @@ rustfs:
 networkPolicy:
   enabled: true
 
+# ── Device edge (D153/D158) ─────────────────────────────────────────────
+# Devices (firmware, edge agents) connect to their own TLS endpoint, which
+# asks for the device client certificate (mTLS) and forwards it to the API.
+# It cannot go through the Ingress: the controller would terminate TLS
+# without the client certificate. A dedicated nginx behind a LoadBalancer
+# Service serves `host` (DNS to point at the Service's external IP).
+# Disabled = devices cannot connect (the API refuses device links that did
+# not come through the edge).
+deviceEdge:
+  enabled: true
+  # Host compiled into firmware builds. Default: devices.<publicHost>.
+  host: ""
+  replicas: 1
+  image: nginxinc/nginx-unprivileged:1.29-alpine
+  service:
+    type: LoadBalancer
+    port: 443
+    annotations: {}
+    # Pin the external IP when the provider allows it (MetalLB, cloud LB).
+    loadBalancerIP: ""
+  # Server certificate of the device endpoint. Empty = a private CA and a
+  # certificate for `host` are generated once and kept across upgrades
+  # (Secret `<release>-device-edge-tls`, keys tls.crt/tls.key/ca.crt):
+  # firmware then pins that CA instead of deviceCa.pem. Set it to a
+  # kubernetes.io/tls Secret you manage (cert-manager...) to use a public
+  # certificate; deviceCa.pem must then hold its root.
+  tls:
+    existingSecret: ""
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
 # ── Ingress ─────────────────────────────────────────────────────────────
 ingress:
   enabled: true
   className: nginx
   annotations: {}
-  # Access log of the device websockets (/ws/*, on their own Ingress). They
-  # authenticate with `?token=`: off by default so tokens never reach the
-  # controller logs (ingress-nginx, Traefik ≥ 3.1 — other controllers: see
-  # the chart README).
+  # Access log of the browser websockets (/ws/*, on their own Ingress):
+  # off by default (ingress-nginx, Traefik ≥ 3.1). Devices never use the
+  # Ingress (see deviceEdge).
   wsAccessLog: false
   # TLS terminated by the ingress. Leave empty when TLS is terminated
   # upstream (Cloudflare proxy, external load balancer).

@@ -2,7 +2,7 @@ apiVersion: v2
 name: pnex
 description: PNeX on Kubernetes — API, job worker, Rauthy (OIDC), OpenObserve, Valkey, RustFS and a CloudNativePG database.
 type: application
-version: 0.2.1
+version: 0.3.0
 # Image tag of pnex-server-rs / pnex-builder-rs (continuously built from green main).
 appVersion: "latest"
 home: https://pnex.io
