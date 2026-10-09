@@ -689,6 +689,12 @@ write_env() {
     OPENOBSERVE_ROOT_PASSWORD=$(pick "$(old OPENOBSERVE_ROOT_PASSWORD)" "O2x$(rand_hex 16)Z9!")
     PNEX_NOTIFY_INTERNAL_TOKEN=$(pick "$(old PNEX_NOTIFY_INTERNAL_TOKEN)" "$(rand_hex 32)")
     PNEX_FLOW_RUNTIME_TOKEN=$(pick "$(old PNEX_FLOW_RUNTIME_TOKEN)" "$(rand_hex 32)")
+    # Edge <-> server secret: the server trusts nginx's headers (TLS, device
+    # client certificate) only with it (D153, SEC-21).
+    PNEX_EDGE_SECRET=$(pick "$(old PNEX_EDGE_SECRET)" "$(rand_hex 32)")
+    # Device endpoint (D158): its own TLS port asking for the device client
+    # certificate; browsers stay on 443.
+    PNEX_DEVICE_PORT=$(pick "$(old PNEX_DEVICE_PORT)" "4443")
     # Org secrets vault keyring (`<id>:<base64 32 bytes>`). Losing it makes
     # every stored secret unreadable: it lives in .env, covered by backups.
     PNEX_SECRETS_KEYS=$(pick "$(old PNEX_SECRETS_KEYS)" "k1:$(openssl rand -base64 32)")
@@ -772,6 +778,8 @@ write_env() {
         echo "OPENOBSERVE_ROOT_PASSWORD='$OPENOBSERVE_ROOT_PASSWORD'"
         echo "PNEX_NOTIFY_INTERNAL_TOKEN='$PNEX_NOTIFY_INTERNAL_TOKEN'"
         echo "PNEX_FLOW_RUNTIME_TOKEN='$PNEX_FLOW_RUNTIME_TOKEN'"
+        echo "PNEX_EDGE_SECRET='$PNEX_EDGE_SECRET'"
+        echo "PNEX_DEVICE_PORT='$PNEX_DEVICE_PORT'"
         echo "PNEX_SECRETS_KEYS='$PNEX_SECRETS_KEYS'"
         echo "RAUTHY_SECRET_RAFT='$RAUTHY_SECRET_RAFT'"
         echo "RAUTHY_SECRET_API='$RAUTHY_SECRET_API'"

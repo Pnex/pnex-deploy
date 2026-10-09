@@ -44,6 +44,10 @@ x-pnex-env: &pnex-env
   PNEX_PROD_HOST: ${PNEX_PROD_HOST:-}
   # Secrets vault keyring: the server refuses to start without it.
   PNEX_SECRETS_KEYS: ${PNEX_SECRETS_KEYS:?run install.sh}
+  # Headers of nginx are trusted only with this secret (D153, SEC-21).
+  PNEX_EDGE_SECRET: ${PNEX_EDGE_SECRET:?run install.sh}
+  # Device endpoint port compiled into firmware and given to edge agents.
+  PNEX_DEVICE_PORT: ${PNEX_DEVICE_PORT:-4443}
   # Rate limiting (OAuth bridge, agent enrolment, device websockets, public
   # tours). The client IP is read from X-Forwarded-For only when the peer
   # is in PNEX_TRUSTED_PROXIES: here, nginx on the internal network only.
@@ -280,11 +284,15 @@ services:
       PNEX_DOMAIN: ${PNEX_DOMAIN:?run install.sh}
       PNEX_PUBLIC_HOST: ${PNEX_PUBLIC_HOST:?run install.sh}
       PNEX_DOMAIN_ALIAS: ${PNEX_DOMAIN_ALIAS:-}
+      PNEX_EDGE_SECRET: ${PNEX_EDGE_SECRET:?run install.sh}
+      PNEX_DEVICE_PORT: ${PNEX_DEVICE_PORT:-4443}
       # Only our variables are substituted (keeps $host, $http_upgrade...).
       NGINX_ENVSUBST_FILTER: "^PNEX_"
     ports:
       - "${PNEX_HTTP_PORT:-80}:80"
       - "${PNEX_HTTPS_PORT:-443}:443"
+      # Device endpoint (client certificate asked), D158.
+      - "${PNEX_DEVICE_PORT:-4443}:${PNEX_DEVICE_PORT:-4443}"
     volumes:
       - ./config/nginx/templates:/etc/nginx/templates:ro
       - ./config/nginx/40-cert-watch.sh:/docker-entrypoint.d/40-cert-watch.sh:ro
