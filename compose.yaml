@@ -46,8 +46,9 @@ x-pnex-env: &pnex-env
   PNEX_SECRETS_KEYS: ${PNEX_SECRETS_KEYS:?run install.sh}
   # Headers of nginx are trusted only with this secret (D153, SEC-21).
   PNEX_EDGE_SECRET: ${PNEX_EDGE_SECRET:?run install.sh}
-  # Device endpoint port compiled into firmware and given to edge agents.
-  PNEX_DEVICE_PORT: ${PNEX_DEVICE_PORT:-4443}
+  # Device endpoint compiled into firmware and given to edge agents: the
+  # server host on the device port (`:port`), or its own name.
+  PNEX_DEVICE_HOST: ${PNEX_DEVICE_HOST:-:${PNEX_DEVICE_PORT:-4443}}
   # Rate limiting (OAuth bridge, agent enrolment, device websockets, public
   # tours). The client IP is read from X-Forwarded-For only when the peer
   # is in PNEX_TRUSTED_PROXIES: here, nginx on the internal network only.
