@@ -116,9 +116,9 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: {{ include "pnex.deviceHost" . | quote }}
 {{- end }}
 # Firmware artefacts and media both live in RustFS.
-- name: STORAGE_BACKEND
+- name: PNEX_STORAGE_BACKEND
   value: s3
-- name: MEDIA_BACKEND
+- name: PNEX_MEDIA_BACKEND
   value: s3
 - name: PNEX_S3_ENDPOINT
   value: http://{{ $fullname }}-rustfs:9000

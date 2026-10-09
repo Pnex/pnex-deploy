@@ -765,8 +765,8 @@ write_env() {
         echo "SMTP_FROM='$SMTP_FROM'"
         echo
         echo "# ---- storage ----"
-        echo "STORAGE_BACKEND='$storage_backend'"
-        echo "MEDIA_BACKEND='$media_backend'"
+        echo "PNEX_STORAGE_BACKEND='$storage_backend'"
+        echo "PNEX_MEDIA_BACKEND='$media_backend'"
         echo "PNEX_S3_ENDPOINT='$s3_endpoint'"
         echo "PNEX_S3_BUCKET='$s3_bucket'"
         echo "PNEX_S3_REGION='$s3_region'"
