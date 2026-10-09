@@ -284,6 +284,9 @@ deviceEdge:
   image: nginxinc/nginx-unprivileged:1.29-alpine
   service:
     type: LoadBalancer
+    # On a single-node cluster whose LoadBalancer is the node itself (k3s
+    # ServiceLB), 443 is already taken by the ingress controller: use 4443.
+    # A port other than 443 is appended to the host compiled into firmware.
     port: 443
     annotations: {}
     # Pin the external IP when the provider allows it (MetalLB, cloud LB).

@@ -5,7 +5,7 @@
      served; everything else answers 404. */}}
 {{- $fullname := include "pnex.fullname" . }}
 {{- $name := printf "%s-device-edge" $fullname }}
-{{- $host := include "pnex.deviceHost" . }}
+{{- $host := include "pnex.deviceHostname" . }}
 {{- $tlsSecret := .Values.deviceEdge.tls.existingSecret | default (printf "%s-tls" $name) }}
 {{- if not .Values.deviceEdge.tls.existingSecret }}
 {{- /* Generated once, then reused: firmware pins this CA, so a new one

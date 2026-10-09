@@ -23,9 +23,8 @@ resolver 127.0.0.11 valid=10s ipv6=off;
 access_log off;
 error_log /dev/stderr error;
 
-# Devices authenticate their websockets with `?token=` (/ws/device,
-# /ws/camera) and OAuth callbacks carry `?code=`: if you turn the access
-# log on, use this query-free format (`access_log /dev/stdout pnex_noqs;`
+# OAuth callbacks carry `?code=` and browser websockets a token in the
+# query: if you turn the access log on, use this query-free format (`access_log /dev/stdout pnex_noqs;`
 # inside a server block), never the default `combined`.
 log_format pnex_noqs '$remote_addr - $remote_user [$time_local] '
                      '"$request_method $uri $server_protocol" $status '

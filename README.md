@@ -39,8 +39,8 @@ VirtualBox, any cloud VM). Docker Engine and the compose plugin are
 installed when missing.
 
 On a public VM **without a domain name**, a [sslip.io name](#names-and-tls)
-built from the VM's public IP gets a Let's Encrypt certificate (ports 80 and
-443 open to the internet; `--ip` is needed when the VM only sees a private
+built from the VM's public IP gets a Let's Encrypt certificate for the web
+UI (ports 80 and 443 open to the internet, plus 4443 for devices; `--ip` is needed when the VM only sees a private
 address behind the provider's NAT):
 
 ```bash
@@ -82,7 +82,7 @@ the LAN reach the server.
    ```powershell
    wsl --shutdown
    Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow
-   New-NetFirewallRule -DisplayName "PNeX HTTPS" -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow
+   New-NetFirewallRule -DisplayName "PNeX HTTPS" -Direction Inbound -Protocol TCP -LocalPort 80,443,4443 -Action Allow
    ```
 
 5. Inside Ubuntu, run the installer. On WSL it defaults to a sslip.io name
@@ -114,7 +114,7 @@ Details, scaling and upgrades: [helm/README.md](helm/README.md).
 | Board / CPU | Raspberry Pi 4 (4 GB), any amd64/arm64 | Raspberry Pi 5 (8 GB) or a small x86 box |
 | OS | Raspberry Pi OS Lite 64-bit (bookworm/trixie), Debian 12/13, Ubuntu 22.04+ | Debian 13 / Pi OS trixie |
 | Disk | 16 GB free (the firmware builder image alone is ~8 GB; the installer refuses to start below that, `--force` to override) | 30 GB+, an **SSD** (USB 3 or NVMe) rather than the SD card |
-| Network | LAN with mDNS, a DNS name, or a public IP (sslip.io) | a DHCP reservation for the server |
+| Network | LAN with mDNS, a DNS name, or a public IP (sslip.io); ports 80, 443 and **4443** (devices) reachable | a DHCP reservation for the server |
 
 32-bit Raspberry Pi OS is **not** supported (images are `linux/amd64` and
 `linux/arm64` only). Docker Engine and the compose plugin are installed
@@ -219,7 +219,8 @@ does not accept the password grant.
 
 | Port | Exposed to | Purpose |
 |---|---|---|
-| 443/tcp | LAN / internet | Everything: web UI, API, device websockets (`/ws/`), identity provider (`/auth/v1/`) |
+| 443/tcp | LAN / internet | Web UI, API, browser websockets, identity provider (`/auth/v1/`) |
+| 4443/tcp | LAN / internet (where the devices are) | Device endpoint: device websockets and OTA downloads only, TLS with a client certificate per device (mTLS). Never put a proxy or CDN in front of it. Change with `PNEX_DEVICE_PORT` in `.env`, then rebuild the devices |
 | 80/tcp | LAN / internet | Redirect to HTTPS, Let's Encrypt challenges |
 | 5353/udp | LAN | mDNS (avahi) for `<hostname>.local` |
 

@@ -199,9 +199,20 @@ nginx.ingress.kubernetes.io/proxy-buffering: "off"
 {{- end }}
 {{- end }}
 
-{{/* Device endpoint host (D158): deviceEdge.host, else devices.<publicHost>. */}}
-{{- define "pnex.deviceHost" -}}
+{{/* Device endpoint compiled into firmware (D158): deviceEdge.host, else
+     devices.<publicHost>, with the Service port when it is not 443. */}}
+{{- define "pnex.deviceHostname" -}}
 {{- .Values.deviceEdge.host | default (printf "devices.%s" .Values.publicHost) -}}
+{{- end -}}
+
+{{- define "pnex.deviceHost" -}}
+{{- $host := include "pnex.deviceHostname" . -}}
+{{- $port := int .Values.deviceEdge.service.port -}}
+{{- if and (ne $port 443) (not (contains ":" $host)) -}}
+{{- printf "%s:%d" $host $port -}}
+{{- else -}}
+{{- $host -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Where the CA pinned by firmware comes from: "edge" (the device edge's
