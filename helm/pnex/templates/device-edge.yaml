@@ -78,7 +78,7 @@ data:
             return 200 "ok\n";
         }
 
-        location ~ ^/ws/(device|sensor/ingest|camera)$ {
+        location ~ ^/ws/(device|camera)$ {
             # Reconnects of a fleet would flood the log at error level.
             error_log /dev/stderr crit;
             proxy_pass http://{{ $fullname }}-api:5150;

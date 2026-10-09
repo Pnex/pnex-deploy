@@ -151,7 +151,7 @@ server {
 
     set $pnex_backend pnex-server:5150;
 
-    location ~ ^/ws/(device|sensor/ingest|camera)$ {
+    location ~ ^/ws/(device|camera)$ {
         error_log /dev/stderr crit;
         proxy_pass http://$pnex_backend;
         proxy_buffering off;
