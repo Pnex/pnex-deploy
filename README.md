@@ -120,6 +120,13 @@ Details, scaling and upgrades: [helm/README.md](helm/README.md).
 `linux/arm64` only). Docker Engine and the compose plugin are installed
 automatically when missing.
 
+**Database: PostgreSQL only.** PNeX runs on PostgreSQL and nothing else (SQLite
+was dropped before 0.1.0). The stack ships it (`postgres:18-alpine`, data in the
+`pgdata` volume, never published on the network); the `raspi` profile shrinks its
+buffers. It also holds the job queue and, with `--storage fs`, the firmware
+artefacts. The server migrates the schema at start; a database from an older
+beta whose schema was recut is refused: start from a fresh one.
+
 ## Flags
 
 | Flag | Default | Meaning |
@@ -194,7 +201,7 @@ certificates) and Docker volumes for the data. `pnexctl` goes to
 | pnex-server | `shanisma/pnex-server-rs` | API, websockets, web UI, flow runtime. Migrates the database at start. |
 | pnex-builder | `shanisma/pnex-builder-rs` | Job worker: firmware builds (PlatformIO) and 360° stitching. |
 | rauthy | `ghcr.io/sebadob/rauthy:0.36.2` | OpenID Connect identity provider (`/auth/v1/`). |
-| postgres | `postgres:18-alpine` | Main database. |
+| postgres | `postgres:18-alpine` | The only database: data, job queue, firmware artefacts (`--storage fs`). |
 | openobserve | `openobserve/openobserve:v1.0.0` | Telemetry storage. |
 | valkey | `valkey/valkey:9-alpine` | Device presence leases (anti-clone), device command bus, live last-value cache. No persistence (no disk writes). |
 | rustfs (+ rustfs-init) | `rustfs/rustfs:1.0.0-rc.2`, `amazon/aws-cli` | `--storage s3` only. |
