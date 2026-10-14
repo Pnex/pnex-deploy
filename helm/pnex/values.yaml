@@ -114,6 +114,18 @@ api:
     trustedProxies: ""
   extraEnv: []
 
+# ── Dedicated flow workers (D106) ───────────────────────────────────────
+# 0 = the API pods also run the flows (fine for one node). > 0 = the API
+# pods only serve HTTP/websockets and these pods (same image, no Service,
+# no ingress, api.extraEnv applies) run every flow: a flow spike or a
+# runaway user flow never starves the API. Device commands then always go
+# through the Valkey bus (D107).
+flowWorker:
+  replicas: 0
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
 # ── Custom firmware IDE (user C++ compiled by the worker) ───────────────
 # Off by default. The builder image ships no bubblewrap: `sandbox: none`
 # runs user code in the worker container, which holds the database

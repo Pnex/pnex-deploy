@@ -3,16 +3,29 @@
 # and firmware artefacts live in RustFS. Several replicas form a flow
 # execution cluster (each org's flows run on exactly one pod); migrations
 # run once under a Postgres advisory lock.
-{{- $name := printf "%s-api" (include "pnex.fullname" .) }}
+#
+# flowWorker.replicas > 0 splits the roles: the API pods stop running flows
+# (PNEX_FLOW_RUN_WORKER=false) and dedicated flow-worker pods (same image,
+# no Service, no ingress) run them, so a flow spike never starves the API.
+{{- $ctx := . }}
+{{- $split := gt (int .Values.flowWorker.replicas) 0 }}
+{{- $roles := list (list "api" .Values.api.replicas .Values.api.resources (not $split)) }}
+{{- if $split }}
+{{- $roles = append $roles (list "flow-worker" .Values.flowWorker.replicas .Values.flowWorker.resources true) }}
+{{- end }}
+{{- range $role := $roles }}
+{{- $component := index $role 0 }}
+{{- $name := printf "%s-%s" (include "pnex.fullname" $ctx) $component }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "pnex.labels" . | nindent 4 }}
-    {{- include "pnex.selector" (list . "api") | nindent 4 }}
+    {{- include "pnex.labels" $ctx | nindent 4 }}
+    {{- include "pnex.selector" (list $ctx $component) | nindent 4 }}
 spec:
-  replicas: {{ .Values.api.replicas }}
+  replicas: {{ index $role 1 }}
   # The old pod drains (its orgs move to the new one) before it stops: no
   # flow ever runs twice, no downtime.
   strategy:
@@ -22,19 +35,19 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      {{- include "pnex.selector" (list . "api") | nindent 6 }}
+      {{- include "pnex.selector" (list $ctx $component) | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "pnex.selector" (list . "api") | nindent 8 }}
+        {{- include "pnex.selector" (list $ctx $component) | nindent 8 }}
     spec:
-      {{- include "pnex.podSecurity" . | nindent 6 }}
-      {{- with .Values.imagePullSecrets }}
+      {{- include "pnex.podSecurity" $ctx | nindent 6 }}
+      {{- with $ctx.Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # Shutdown drains the flow worker (<= 20 s), flushes buffered
-      # telemetry (<= 10 s) and releases singleton leases.
+      # preStop (10 s) + flow worker drain (<= 20 s) + telemetry flush
+      # (<= 10 s) + singleton lease release.
       terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
@@ -43,12 +56,19 @@ spec:
         fsGroup: 65532
       containers:
         - name: pnex-server
-          image: "{{ .Values.image.registry }}/pnex-server-rs:{{ include "pnex.imageTag" . }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ $ctx.Values.image.registry }}/pnex-server-rs:{{ include "pnex.imageTag" $ctx }}"
+          imagePullPolicy: {{ $ctx.Values.image.pullPolicy }}
           args: ["start"]
-          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          {{- include "pnex.containerSecurity" $ctx | nindent 10 }}
+          # The server stops accepting connections on SIGTERM while the
+          # ingress controller still routes to it for a few seconds: keep
+          # serving until the endpoint is gone (native sleep, the image has
+          # no shell).
+          lifecycle:
+            preStop:
+              sleep: { seconds: 10 }
           env:
-            {{- include "pnex.appEnv" . | nindent 12 }}
+            {{- include "pnex.appEnv" $ctx | nindent 12 }}
             # Flow execution cluster (D106): every pod advertises its own
             # address and shares the cluster token (internal routes are
             # fail-closed). Worker id = pod name.
@@ -59,8 +79,10 @@ spec:
               value: "http://$(POD_IP):5150"
             - name: PNEX_FLOW_CLUSTER_TOKEN
               valueFrom:
-                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: flow-cluster-token }
-            {{- with .Values.api.extraEnv }}
+                secretKeyRef: { name: {{ include "pnex.secretName" $ctx }}, key: flow-cluster-token }
+            - name: PNEX_FLOW_RUN_WORKER
+              value: {{ index $role 3 | quote }}
+            {{- with $ctx.Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
@@ -77,21 +99,36 @@ spec:
             periodSeconds: 20
             failureThreshold: 5
           resources:
-            {{- toYaml .Values.api.resources | nindent 12 }}
+            {{- toYaml (index $role 2) | nindent 12 }}
           volumeMounts:
             - { name: data, mountPath: /data }
-            {{- include "pnex.deviceCaMount" . | nindent 12 }}
+            {{- include "pnex.deviceCaMount" $ctx | nindent 12 }}
       volumes:
         # Scratch only (flow runtime artefacts, rebuilt at boot).
         - name: data
           emptyDir:
             sizeLimit: 1Gi
-        {{- include "pnex.deviceCaVolume" . | nindent 8 }}
+        {{- include "pnex.deviceCaVolume" $ctx | nindent 8 }}
+{{- if gt (int (index $role 1)) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" $ctx | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list $ctx $component) | nindent 6 }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $name }}
+  name: {{ include "pnex.fullname" . }}-api
   labels:
     {{- include "pnex.labels" . | nindent 4 }}
 spec:
@@ -99,17 +136,3 @@ spec:
     {{- include "pnex.selector" (list . "api") | nindent 4 }}
   ports:
     - { name: http, port: 5150, targetPort: http }
-{{- if gt (int .Values.api.replicas) 1 }}
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: {{ $name }}
-  labels:
-    {{- include "pnex.labels" . | nindent 4 }}
-spec:
-  maxUnavailable: 1
-  selector:
-    matchLabels:
-      {{- include "pnex.selector" (list . "api") | nindent 6 }}
-{{- end }}
