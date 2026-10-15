@@ -82,6 +82,10 @@ spec:
                 secretKeyRef: { name: {{ include "pnex.secretName" $ctx }}, key: flow-cluster-token }
             - name: PNEX_FLOW_RUN_WORKER
               value: {{ index $role 3 | quote }}
+            # Flow-worker pods sit behind no Service: silences the server's
+            # "API and flow runtime in the same cgroup" boot warning.
+            - name: PNEX_SERVES_API
+              value: {{ eq $component "api" | quote }}
             {{- with $ctx.Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
