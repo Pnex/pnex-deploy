@@ -24,3 +24,9 @@ PNeX is deploying on https://{{ .Values.publicHost }}/
   WARNING: smtp.password is empty — Rauthy cannot send mail until it is set.
 {{- end }}
 {{- end }}
+{{- if not .Values.api.egressDenyCidrs }}
+
+  WARNING: api.egressDenyCidrs is empty — user flows and webhooks can still
+  reach the cluster's pod and service addresses by IP. Set your pod and
+  service CIDRs (see values.yaml) to close it.
+{{- end }}

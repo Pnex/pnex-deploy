@@ -112,6 +112,15 @@ api:
     # Behind a CDN, append its ranges so the limit applies per real client,
     # not per CDN edge (Cloudflare: https://www.cloudflare.com/ips/).
     trustedProxies: ""
+  # Requests chosen by users (flow HTTP node, notification webhooks, LLM
+  # providers) must not reach the cluster network: Postgres, Valkey,
+  # OpenObserve, RustFS and Rauthy pods and services (SEC-23). Names
+  # (`*.svc`, `*.cluster.local`, single labels) are always refused; set the
+  # pod and service CIDRs here to also refuse their addresses
+  # (comma-separated). Depends on the distribution: microk8s
+  # "10.1.0.0/16,10.152.183.0/24", k3s "10.42.0.0/16,10.43.0.0/16", kind
+  # "10.244.0.0/16,10.96.0.0/12". Keep the LAN range of your devices out.
+  egressDenyCidrs: ""
   extraEnv: []
 
 # ── Dedicated flow workers (D106) ───────────────────────────────────────

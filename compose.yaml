@@ -54,6 +54,10 @@ x-pnex-env: &pnex-env
   # is in PNEX_TRUSTED_PROXIES: here, nginx on the internal network only.
   PNEX_RATE_LIMIT: ${PNEX_RATE_LIMIT:-on}
   PNEX_TRUSTED_PROXIES: ${PNEX_TRUSTED_PROXIES:-${PNEX_NET_SUBNET:-172.30.66.0/24}}
+  # Requests chosen by users (flow HTTP node, notification webhooks, LLM
+  # providers) never reach the stack's own network: Postgres, Valkey,
+  # OpenObserve, RustFS, Rauthy (SEC-23). Comma-separated CIDRs.
+  PNEX_EGRESS_DENY_CIDRS: ${PNEX_EGRESS_DENY_CIDRS:-${PNEX_NET_SUBNET:-172.30.66.0/24}}
   # Custom firmware IDE: off by default (user C++ compiled on the builder).
   # The builder image has no bubblewrap sandbox: enable it only when every
   # user is trusted (PNEX_FIRMWARE_CUSTOM_ENABLED=true +

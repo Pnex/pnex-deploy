@@ -94,6 +94,10 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
 - name: PNEX_TRUSTED_PROXIES
   value: {{ . | quote }}
 {{- end }}
+{{- with .Values.api.egressDenyCidrs }}
+- name: PNEX_EGRESS_DENY_CIDRS
+  value: {{ . | quote }}
+{{- end }}
 # Custom firmware IDE (user C++ compiled by the worker): off by default.
 - name: PNEX_FIRMWARE_CUSTOM_ENABLED
   value: {{ .Values.customFirmware.enabled | quote }}
