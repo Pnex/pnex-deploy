@@ -9,9 +9,9 @@
 # no Service, no ingress) run them, so a flow spike never starves the API.
 {{- $ctx := . }}
 {{- $split := gt (int .Values.flowWorker.replicas) 0 }}
-{{- $roles := list (list "api" .Values.api.replicas .Values.api.resources (not $split)) }}
+{{- $roles := list (list "api" .Values.api.replicas .Values.api.resources (not $split) .Values.api.terminationGracePeriodSeconds) }}
 {{- if $split }}
-{{- $roles = append $roles (list "flow-worker" .Values.flowWorker.replicas .Values.flowWorker.resources true) }}
+{{- $roles = append $roles (list "flow-worker" .Values.flowWorker.replicas .Values.flowWorker.resources true .Values.flowWorker.terminationGracePeriodSeconds) }}
 {{- end }}
 {{- range $role := $roles }}
 {{- $component := index $role 0 }}
@@ -47,8 +47,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       # preStop (10 s) + flow worker drain (<= 20 s) + telemetry flush
-      # (<= 10 s) + singleton lease release.
-      terminationGracePeriodSeconds: 45
+      # (<= 10 s) + singleton lease release + an import run in progress.
+      terminationGracePeriodSeconds: {{ index $role 4 }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
