@@ -158,6 +158,16 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   value: {{ .Values.worker.stitchMaxConcurrent | quote }}
 - name: PNEX_STITCH_OUT_WIDTH
   value: {{ .Values.worker.stitchOutWidth | quote }}
+{{- if .Values.browsers.obscura.enabled }}
+# Platform default browser of the site recipes (D325); org endpoints must
+# be public, only this one may be an in-cluster address.
+# shortcut: only the obscura engine can be the default, add a switch when chrome is usable.
+- name: PNEX_BROWSER_URL
+  value: "http://{{ include "pnex.fullname" . }}-browser-obscura:9222"
+- name: PNEX_BROWSER_TOKEN
+  valueFrom:
+    secretKeyRef: { name: {{ $secret }}, key: browser-cdp-token }
+{{- end }}
 {{- end -}}
 
 {{- define "pnex.persistence" -}}

@@ -61,6 +61,9 @@ secrets:
   # the API trusts the edge's TLS and client-certificate headers only with
   # it (>= 16 chars). Generated when empty.
   edgeSecret: ""
+  # Bearer token of the headless browsers' CDP port (`browsers.*.tokenEnv`),
+  # to paste in the PNeX browser endpoint (>= 32 chars). Generated when empty.
+  browserCdpToken: ""
 
 # ── Outgoing mail (Rauthy: account activation, password reset) ─────────
 smtp:
@@ -197,6 +200,43 @@ worker:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 4Gi }
   extraEnv: []
+
+# ── Headless browsers (site recipes, D323–D326) ─────────────────────────
+# CDP endpoints the API and workers drive with chromiumoxide. Each enabled
+# engine is a Deployment + Service `<release>-browser-<name>:9222`, to
+# declare in PNeX (browser endpoints settings) as
+# ws://<service>.<namespace>.svc:9222. The CDP port has no auth: only PNeX
+# pods may connect (NetworkPolicy), and the browser reaches the public
+# internet only (a visited page must never reach Postgres or the API).
+browsers:
+  obscura:
+    enabled: true
+    # Apache-2.0, Rust + V8, CDP on 9222, distroless nonroot (uid 65532).
+    # Independent engine: rendering may differ from Chrome on rare CSS.
+    image: h4ckf0r0day/obscura:0.2.4
+    # Listening off loopback requires a token (`Authorization: Bearer`).
+    # It blocks private and link-local targets on its own (SSRF), on top of
+    # the NetworkPolicy. Robots.txt is enforced by PNeX, not here.
+    args: ["serve", "--port", "9222", "--host", "0.0.0.0", "--max-connections", "16"]
+    tokenEnv: OBSCURA_CDP_TOKEN
+    runAsUser: 65532
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
+  chrome:
+    # Reference rendering (proof screenshots). Untested: no CDP token (the
+    # NetworkPolicy is the only guard), and Chrome refuses CDP requests whose
+    # Host header is a DNS name: check both before enabling.
+    enabled: false
+    image: chromedp/headless-shell:155.0.8059.40
+    args: ["--no-sandbox", "--disable-dev-shm-usage",
+           "--remote-debugging-address=0.0.0.0", "--remote-debugging-port=9222"]
+    runAsUser: 1000
+    replicas: 1
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { memory: 2Gi }
 
 # ── PostgreSQL (CloudNativePG operator must be installed) ───────────────
 postgres:

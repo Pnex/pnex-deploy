@@ -1,0 +1,111 @@
+# Headless browsers driven over CDP by the API and workers (site recipes,
+# D323–D326). One Deployment + Service per enabled engine. No persistence:
+# every run opens a fresh browser context.
+{{- $ctx := . }}
+{{- range $engine, $b := .Values.browsers }}
+{{- if $b.enabled }}
+{{- $name := printf "%s-browser-%s" (include "pnex.fullname" $ctx) $engine }}
+{{- $app := printf "browser-%s" $engine }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" $ctx | nindent 4 }}
+    {{- include "pnex.selector" (list $ctx $app) | nindent 4 }}
+spec:
+  replicas: {{ $b.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list $ctx $app) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list $ctx $app) | nindent 8 }}
+    spec:
+      {{- include "pnex.podSecurity" $ctx | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $b.runAsUser }}
+        runAsGroup: {{ $b.runAsUser }}
+      containers:
+        - name: browser
+          image: {{ $b.image }}
+          {{- include "pnex.containerSecurity" $ctx | nindent 10 }}
+          args: {{ toJson $b.args }}
+          {{- with $b.tokenEnv }}
+          env:
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" $ctx }}, key: browser-cdp-token }
+          {{- end }}
+          ports:
+            - { name: cdp, containerPort: 9222 }
+          readinessProbe:
+            tcpSocket: { port: cdp }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: cdp }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $b.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        # Chrome writes its profile and shared memory here.
+        - name: tmp
+          emptyDir: { sizeLimit: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "pnex.selector" (list $ctx $app) | nindent 4 }}
+  ports:
+    - { name: cdp, port: 9222, targetPort: cdp }
+{{- if $ctx.Values.networkPolicy.enabled }}
+---
+# CDP has no auth: only PNeX pods connect. The browser reaches DNS and the
+# public internet only, never the cluster or private ranges (SSRF).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" $ctx | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pnex.selector" (list $ctx $app) | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/instance, operator: In, values: [{{ $ctx.Release.Name | quote }}] }
+              - { key: app.kubernetes.io/name, operator: In, values: ["api", "flow-worker", "worker"] }
+      ports:
+        - port: 9222
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                     "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"]
+      ports:
+        - { port: 80, protocol: TCP }
+        - { port: 443, protocol: TCP }
+{{- end }}
+{{- end }}
+{{- end }}
