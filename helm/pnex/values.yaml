@@ -64,6 +64,8 @@ secrets:
   # Bearer token of the headless browsers' CDP port (`browsers.*.tokenEnv`),
   # to paste in the PNeX browser endpoint (>= 32 chars). Generated when empty.
   browserCdpToken: ""
+  # SearXNG `server.secret_key` (`searxng.enabled`). Generated when empty.
+  searxngSecretKey: ""
 
 # ── Outgoing mail (Rauthy: account activation, password reset) ─────────
 smtp:
@@ -237,6 +239,22 @@ browsers:
     resources:
       requests: { cpu: 200m, memory: 512Mi }
       limits: { memory: 2Gi }
+
+# ── SearXNG (optional web search provider of the orgs) ─────────────────
+# Service `<release>-searxng:8080`, internal only: declare it in PNeX (web
+# search settings) as kind searxng, address http://<release>-searxng:8080,
+# no key. Its host is added to PNEX_EGRESS_ALLOW_HOSTS of the API and flow
+# workers; `api.egressDenyCidrs` must not cover the service CIDR.
+searxng:
+  enabled: false
+  image: searxng/searxng:2026.10.19-81371861f
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  # Merged over the chart's settings.yml (use_default_settings, JSON
+  # format on, limiter off), e.g. { search: { safe_search: 1 } }.
+  settings: {}
 
 # ── PostgreSQL (CloudNativePG operator must be installed) ───────────────
 postgres:

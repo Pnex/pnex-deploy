@@ -168,6 +168,11 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   valueFrom:
     secretKeyRef: { name: {{ $secret }}, key: browser-cdp-token }
 {{- end }}
+{{- if .Values.searxng.enabled }}
+# The egress guard refuses internal names: lift it for the chart's SearXNG.
+- name: PNEX_EGRESS_ALLOW_HOSTS
+  value: "{{ $fullname }}-searxng,{{ $fullname }}-searxng.{{ .Release.Namespace }}.svc"
+{{- end }}
 {{- end -}}
 
 {{- define "pnex.persistence" -}}

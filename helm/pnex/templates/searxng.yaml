@@ -1,0 +1,88 @@
+# Optional metasearch engine an org can declare as its web search provider
+# (kind searxng, address http://<release>-searxng:8080). Internal only: no
+# Ingress, only the API and flow workers connect. Stateless.
+{{- if .Values.searxng.enabled }}
+{{- $name := printf "%s-searxng" (include "pnex.fullname" .) }}
+{{- /* The JSON format is what pnex-server calls; the bot limiter would
+     throttle it, every query coming from the same pods. */}}
+{{- $base := dict
+  "use_default_settings" true
+  "server" (dict "limiter" false "image_proxy" false "public_instance" false)
+  "search" (dict "formats" (list "html" "json")) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+data:
+  settings.yml: |
+    {{- mergeOverwrite $base .Values.searxng.settings | toYaml | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "searxng") | nindent 4 }}
+spec:
+  replicas: {{ .Values.searxng.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "searxng") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "searxng") | nindent 8 }}
+      annotations:
+        checksum/settings: {{ mergeOverwrite $base .Values.searxng.settings | toYaml | sha256sum }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 977
+        runAsGroup: 977
+        fsGroup: 977
+      containers:
+        - name: searxng
+          image: {{ .Values.searxng.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            # server.secret_key, kept across upgrades in the chart secret.
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: searxng-secret-key }
+            # The image binds `::`, which fails on pods without IPv6.
+            - { name: GRANIAN_HOST, value: "0.0.0.0" }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.searxng.resources | nindent 12 }}
+          volumeMounts:
+            - { name: settings, mountPath: /etc/searxng, readOnly: true }
+            - { name: cache, mountPath: /var/cache/searxng }
+      volumes:
+        - name: settings
+          configMap: { name: {{ $name }} }
+        - name: cache
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "pnex.selector" (list . "searxng") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

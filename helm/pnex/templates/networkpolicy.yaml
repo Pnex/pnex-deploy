@@ -3,9 +3,13 @@
 # OpenObserve (root credentials) and RustFS. Rauthy and the API stay
 # reachable from the ingress controller; Postgres is left to CloudNativePG.
 {{- $ctx := . }}
-{{- range $store := list (list "valkey" "redis" (list "api" "flow-worker" "worker"))
+{{- $stores := list (list "valkey" "redis" (list "api" "flow-worker" "worker"))
                        (list "openobserve" "http" (list "api" "flow-worker" "worker"))
                        (list "rustfs" "s3" (list "api" "flow-worker" "worker" "rustfs-bucket")) }}
+{{- if .Values.searxng.enabled }}
+{{- $stores = append $stores (list "searxng" "http" (list "api" "flow-worker")) }}
+{{- end }}
+{{- range $store := $stores }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
