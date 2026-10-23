@@ -109,7 +109,9 @@ api:
   # replicas x (dbMaxConnections + 2) stays below postgres max_connections.
   resources:
     requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    # A 400k-row import OOM-killed a 1Gi pod; the peak is ~340 MiB since
+    # the import fixes, 3Gi keeps the headroom.
+    limits: { memory: 3Gi }
   rateLimit:
     enabled: true
     # CIDRs whose X-Forwarded-For is trusted to find the client IP. Empty =
