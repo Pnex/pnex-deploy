@@ -209,12 +209,15 @@ postgres:
     effective_cache_size: 1GB
     work_mem: 4MB
     maintenance_work_mem: 64MB
-    max_connections: "100"
+    # Sum over every pod (api, worker, flowWorker, deviceEdge) of
+    # dbMaxConnections + 2 must stay below this: 12 pods x 12 = 144 hit 100.
+    max_connections: "200"
     checkpoint_timeout: 15min
     wal_compression: "on"
   resources:
-    requests: { cpu: 100m, memory: 512Mi }
-    limits: { memory: 1Gi }
+    # 1Gi was OOMKilled at ~80 backends once max_connections went to 200.
+    requests: { cpu: 100m, memory: 1Gi }
+    limits: { memory: 4Gi }
 
 # ── Valkey (presence leases, device bus, live cache — no persistence) ────
 valkey:
