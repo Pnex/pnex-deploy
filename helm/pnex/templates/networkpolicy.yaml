@@ -5,9 +5,12 @@
 {{- $ctx := . }}
 {{- $stores := list (list "valkey" "redis" (list "api" "flow-worker" "worker"))
                        (list "openobserve" "http" (list "api" "flow-worker" "worker"))
-                       (list "rustfs" "s3" (list "api" "flow-worker" "worker" "rustfs-bucket")) }}
+                       (list "rustfs" "s3" (list "api" "flow-worker" "worker" "pipeline-worker" "rustfs-bucket")) }}
 {{- if .Values.searxng.enabled }}
 {{- $stores = append $stores (list "searxng" "http" (list "api" "flow-worker")) }}
+{{- end }}
+{{- if .Values.ollama.enabled }}
+{{- $stores = append $stores (list "ollama" "http" (list "api" "flow-worker")) }}
 {{- end }}
 {{- range $store := $stores }}
 ---

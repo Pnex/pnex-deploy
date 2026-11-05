@@ -73,6 +73,10 @@ share Valkey and RustFS, and migrate the database once under an advisory
 lock. Keep `replicas × (api.dbMaxConnections + 2)` below Postgres
 `max_connections`. Rolling updates drain the old pod before it stops.
 
+The API and the flow worker are the same binary: restart them together when
+`latest` moves. A background task may be leased by either, and the old one keeps
+it (the System page lists each lease with its pod and version).
+
 ## Upgrading from 0.2.x
 
 Breaking (device security, D153–D158): every device must be **rebuilt and

@@ -168,10 +168,17 @@ app.kubernetes.io/instance: {{ $ctx.Release.Name }}
   valueFrom:
     secretKeyRef: { name: {{ $secret }}, key: browser-cdp-token }
 {{- end }}
+{{- $allow := .Values.api.egressAllowHosts | default list }}
 {{- if .Values.searxng.enabled }}
-# The egress guard refuses internal names: lift it for the chart's SearXNG.
+{{- $allow = concat (list (printf "%s-searxng" $fullname) (printf "%s-searxng.%s.svc" $fullname .Release.Namespace)) $allow }}
+{{- end }}
+{{- if .Values.ollama.enabled }}
+{{- $allow = concat (list (printf "%s-ollama" $fullname) (printf "%s-ollama.%s.svc" $fullname .Release.Namespace) (printf "%s-ollama.%s.svc.cluster.local" $fullname .Release.Namespace)) $allow }}
+{{- end }}
+{{- with $allow }}
+# The egress guard refuses internal names: lift it for these hosts only.
 - name: PNEX_EGRESS_ALLOW_HOSTS
-  value: "{{ $fullname }}-searxng,{{ $fullname }}-searxng.{{ .Release.Namespace }}.svc"
+  value: {{ join "," . | quote }}
 {{- end }}
 {{- end -}}
 

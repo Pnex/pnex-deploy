@@ -131,6 +131,25 @@ api:
   # "10.1.0.0/16,10.152.183.0/24", k3s "10.42.0.0/16,10.43.0.0/16", kind
   # "10.244.0.0/16,10.96.0.0/12". Keep the LAN range of your devices out.
   egressDenyCidrs: ""
+  # In-cluster hosts users may still reach despite the name rule above, e.g.
+  # a geo stack: ["photon.alpine-box.svc", "graphhopper.alpine-box.svc"].
+  # Only lifts the name rule: an address inside egressDenyCidrs stays refused.
+  egressAllowHosts: []
+  extraEnv: []
+
+# ── Data pipelines worker (D573) ────────────────────────────────────────
+# Runs the SQL transforms of data pipelines. Off by default: without it, a
+# pipeline stays queued and its build ends in `build-timeout`.
+pipelineWorker:
+  enabled: false
+  replicas: 1
+  # Query engine pool: keep it at 75 % of the memory limit.
+  memoryMb: 3072
+  # Disk for sorts and joins over the pool (node ephemeral storage).
+  spillGb: 50
+  resources:
+    requests: { cpu: 500m, memory: 4Gi }
+    limits: { memory: 4Gi }
   extraEnv: []
 
 # ── Dedicated flow workers (D106) ───────────────────────────────────────
@@ -264,6 +283,24 @@ searxng:
   # Merged over the chart's settings.yml (use_default_settings, JSON
   # format on, limiter off), e.g. { search: { safe_search: 1 } }.
   settings: {}
+
+# ── Ollama (optional local LLM on CPU for the orgs) ────────────────────
+# Service `<release>-ollama:11434`, internal only: declare it in PNeX (AI
+# providers) as kind ollama, address http://<release>-ollama:11434, no key.
+# The models are pulled at start (needs internet egress) onto the volume.
+# Its host is added to PNEX_EGRESS_ALLOW_HOSTS of the API and flow workers;
+# `api.egressDenyCidrs` must not cover the service CIDR.
+ollama:
+  enabled: false
+  image: ollama/ollama:0.40.13
+  models: ["lfm3"]
+  keepAlive: "-1"
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { memory: 4Gi }
 
 # ── PostgreSQL (CloudNativePG operator must be installed) ───────────────
 postgres:

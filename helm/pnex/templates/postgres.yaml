@@ -13,6 +13,18 @@ spec:
     initdb:
       database: pnex
       owner: pnex
+  {{- if .Values.pipelineWorker.enabled }}
+  # The server's migrations grant this role what it may read; the operator
+  # only gives it a login.
+  managed:
+    roles:
+      - name: pnex_pipeline_worker
+        ensure: present
+        login: true
+        connectionLimit: 10
+        passwordSecret:
+          name: {{ include "pnex.fullname" . }}-pipeline-worker-db
+  {{- end }}
   storage:
     size: {{ .Values.postgres.size }}
     {{- with .Values.postgres.storageClass }}

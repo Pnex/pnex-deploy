@@ -1,0 +1,126 @@
+{{- if .Values.pipelineWorker.enabled }}
+# SQL transforms of data pipelines (D573): the query engine runs apart from the
+# server, on its own database login, which sees the catalogue and the job queue
+# and none of the business tables. Its network stops at Postgres, RustFS and DNS:
+# no application secret but the object store's (SEC-61), no Valkey, no way out.
+{{- $name := printf "%s-pipeline-worker" (include "pnex.fullname" .) }}
+{{- $dbSecret := printf "%s-db" $name }}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $dbSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $dbSecret }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: kubernetes.io/basic-auth
+data:
+  username: {{ "pnex_pipeline_worker" | b64enc }}
+  password: {{ if $old }}{{ index $old.data "password" }}{{ else }}{{ randAlphaNum 48 | b64enc }}{{ end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+    {{- include "pnex.selector" (list . "pipeline-worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.pipelineWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "pipeline-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pnex.selector" (list . "pipeline-worker") | nindent 8 }}
+    spec:
+      {{- include "pnex.podSecurity" . | nindent 6 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: pipeline-worker
+          image: "{{ .Values.image.registry }}/pnex-pipeline-worker-rs:{{ include "pnex.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
+          env:
+            - name: PNEX_PIPELINE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $dbSecret }}, key: password }
+            - name: PNEX_PIPELINE_DATABASE_URL
+              value: postgres://pnex_pipeline_worker:$(PNEX_PIPELINE_DB_PASSWORD)@{{ include "pnex.pgCluster" . }}-rw:5432/pnex
+            - name: PNEX_S3_ENDPOINT
+              value: http://{{ include "pnex.fullname" . }}-rustfs:9000
+            - name: PNEX_S3_BUCKET
+              value: {{ .Values.rustfs.bucket | quote }}
+            - name: PNEX_S3_REGION
+              value: {{ .Values.rustfs.region | quote }}
+            - name: PNEX_S3_PATH_STYLE
+              value: "true"
+            - name: PNEX_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-access-key }
+            - name: PNEX_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-secret-key }
+            - name: PNEX_PIPELINE_MEMORY_MB
+              value: {{ .Values.pipelineWorker.memoryMb | quote }}
+            - name: PNEX_PIPELINE_SPILL_DIR
+              value: /spill
+            - name: PNEX_PIPELINE_SPILL_MAX_GB
+              value: {{ .Values.pipelineWorker.spillGb | quote }}
+            {{- with .Values.pipelineWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.pipelineWorker.resources | nindent 12 }}
+          volumeMounts:
+            - { name: spill, mountPath: /spill }
+      volumes:
+        - name: spill
+          emptyDir:
+            sizeLimit: {{ .Values.pipelineWorker.spillGb }}Gi
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pnex.selector" (list . "pipeline-worker") | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "pnex.pgCluster" . }}
+      ports:
+        - { port: 5432, protocol: TCP }
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pnex.selector" (list . "rustfs") | nindent 14 }}
+      ports:
+        - { port: s3, protocol: TCP }
+    # DNS, in the cluster only: TCP 53 open to the world is a way out. A NodeLocal DNS
+    # cache answers on a node address and would need an ipBlock here.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+{{- end }}
+{{- end }}
