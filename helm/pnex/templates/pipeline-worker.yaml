@@ -67,10 +67,10 @@ spec:
               value: "true"
             - name: PNEX_S3_ACCESS_KEY
               valueFrom:
-                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-access-key }
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-pipeline-access-key }
             - name: PNEX_S3_SECRET_KEY
               valueFrom:
-                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-secret-key }
+                secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: rustfs-pipeline-secret-key }
             - name: PNEX_PIPELINE_MEMORY_MB
               value: {{ .Values.pipelineWorker.memoryMb | quote }}
             - name: PNEX_PIPELINE_SPILL_DIR

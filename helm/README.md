@@ -42,6 +42,12 @@ yourself, keep them in an encrypted values file (sops) or point
 `secrets.existingSecret` at a Secret with the same keys as
 `templates/secrets.yaml`.
 
+With `pipelineWorker.enabled`, the RustFS job also creates the worker's own
+storage identity (`rustfs-pipeline-access-key`, `rustfs-pipeline-secret-key`):
+it reaches `org_*/datasets/*` only, never the media or documents of an
+organisation. With `secrets.existingSecret`, add both keys (≥ 20 and ≥ 40
+random characters).
+
 **Back up `secrets-keys`** with the database backups: it is the keyring of
 the organisations' secrets vault (notification tokens, HTTP credentials,
 Wi-Fi passwords, LLM keys). `pnex-server` refuses to start without it, and
