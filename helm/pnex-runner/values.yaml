@@ -1,0 +1,51 @@
+# PNeX runner — default values. Installed apart from the server (like a CI
+# runner): usually its own namespace, possibly another cluster. The runner
+# creates its job pods, Secrets and NetworkPolicies in its own namespace only.
+#
+# One runner per namespace: it keeps its own token in the Secret
+# `pnex-runner-token` of the namespace.
+
+# Address of the PNeX server (https). The runner and every job pod must reach it.
+serverUrl: ""
+# Plain http server (local tests only).
+allowHttp: false
+
+# Join token, from POST /api/v1/runners/join-tokens (or `pnex runners
+# join-tokens-create`). It works once; the runner then keeps its own token.
+joinToken:
+  # Secret you manage, key `token`. Takes precedence over `value`.
+  existingSecret: ""
+  # Stored in a Secret of the chart. Never commit it in a values file.
+  value: ""
+
+image:
+  repository: docker.io/shanisma/pnex-runner-rs
+  # Defaults to .Chart.AppVersion. Pin a digest for reproducible jobs:
+  # `digest` wins over `tag`, and build/scan/probe pods start from this same
+  # image (egress gate, SEC-E4).
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Hardened RuntimeClass for job pods (gvisor, kata). Empty = the runner
+# announces `isolation:none`, never `isolation:pod`.
+runtimeClassName: ""
+# Take image builds (rootless BuildKit; needs allowPrivilegeEscalation in
+# the namespace's pod security level).
+builds: true
+# Jobs at once.
+maxJobs: ""
+# Pull secret (in this namespace) given to job pods for private images.
+jobPullSecret: ""
+# In-cluster destinations job pods may reach on top of DNS and the public
+# internet, as `ns:<namespace>` or CIDRs (a build cache, a registry).
+jobEgress: []
+extraEnv: []
+
+resources:
+  requests: { cpu: 50m, memory: 32Mi }
+  limits: { cpu: 500m, memory: 128Mi }
+
+nodeSelector: {}
+tolerations: []

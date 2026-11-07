@@ -1,0 +1,69 @@
+{{- if not .Values.serverUrl }}{{ fail "serverUrl is required" }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: { app: {{ .Release.Name }} }
+spec:
+  # One runner per namespace (its token Secret is shared).
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }} }
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: runner
+          image: {{ include "pnex-runner.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - { name: PNEX_RUNNER_SERVER_URL, value: {{ .Values.serverUrl | quote }} }
+            {{- if .Values.allowHttp }}
+            - { name: PNEX_RUNNER_ALLOW_HTTP, value: "1" }
+            {{- end }}
+            - name: PNEX_RUNNER_JOIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pnex-runner.joinSecret" . }}
+                  key: token
+                  optional: true
+            - { name: PNEX_RUNNER_RUNTIME, value: {{ .Values.runtimeClassName | quote }} }
+            - { name: PNEX_RUNNER_BUILDS, value: {{ .Values.builds | toString | quote }} }
+            {{- with .Values.maxJobs }}
+            - { name: PNEX_RUNNER_MAX_JOBS, value: {{ . | toString | quote }} }
+            {{- end }}
+            {{- with .Values.jobPullSecret }}
+            - { name: PNEX_RUNNER_PULL_SECRET, value: {{ . | quote }} }
+            {{- end }}
+            - { name: PNEX_RUNNER_JOB_EGRESS, value: {{ join "," .Values.jobEgress | quote }} }
+            # Build, scan and probe pods start behind this image's egress gate (SEC-E4).
+            - { name: PNEX_RUNNER_IMAGE, value: {{ include "pnex-runner.image" . | quote }} }
+            # The gate probes this pod on port 7171, an address their rule refuses.
+            - name: POD_IP
+              valueFrom:
+                fieldRef: { fieldPath: status.podIP }
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
