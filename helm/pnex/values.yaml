@@ -135,6 +135,13 @@ api:
   # a geo stack: ["photon.alpine-box.svc", "graphhopper.alpine-box.svc"].
   # Only lifts the name rule: an address inside egressDenyCidrs stays refused.
   egressAllowHosts: []
+  # Hosted agents (runner chart pnex-runner): the server hands these images to
+  # runners; without them builds and sandbox runs cannot start. Pin by digest:
+  #   - name: PNEX_SANDBOX_INIT_IMAGE
+  #     value: docker.io/shanisma/pnex-sandbox-init@sha256:...
+  #   - name: PNEX_IMAGE_BUILDER
+  #     value: docker.io/shanisma/pnex-image-builder@sha256:...
+  # PNEX_AGENT_GATEWAY_URL only when sandboxes cannot reach the public host.
   extraEnv: []
 
 # ── Data pipelines worker (D573) ────────────────────────────────────────
