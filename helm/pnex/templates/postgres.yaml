@@ -13,6 +13,11 @@ spec:
     initdb:
       database: pnex
       owner: pnex
+      # A new cluster has the extensions before the first migration runs.
+      postInitApplicationSQL:
+        {{- range .Values.postgres.extensions }}
+        - CREATE EXTENSION IF NOT EXISTS {{ . }};
+        {{- end }}
   # The server's migrations grant this role what it may read, so it exists
   # before them; it only logs in when the pipeline worker runs.
   managed:
@@ -39,3 +44,24 @@ spec:
       {{- end }}
   resources:
     {{- toYaml .Values.postgres.resources | nindent 4 }}
+---
+# The same extensions on an existing cluster, kept present by the operator
+# (CNPG Database, declarative extensions). `retain`: deleting this object
+# never drops the database.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ include "pnex.pgCluster" . }}-pnex
+  labels:
+    {{- include "pnex.labels" . | nindent 4 }}
+spec:
+  name: pnex
+  owner: pnex
+  cluster:
+    name: {{ include "pnex.pgCluster" . }}
+  databaseReclaimPolicy: retain
+  extensions:
+    {{- range .Values.postgres.extensions }}
+    - name: {{ . }}
+      ensure: present
+    {{- end }}

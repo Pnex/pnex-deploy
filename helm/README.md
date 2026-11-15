@@ -8,7 +8,8 @@ OpenObserve, Valkey, RustFS and a PostgreSQL cluster managed by
 ## Requirements
 
 - Kubernetes ≥ 1.27, a default StorageClass.
-- The CloudNativePG operator.
+- The CloudNativePG operator, 1.26 or later (declarative extensions of the
+  `Database` object).
 - An ingress controller (`ingress-nginx` by default) for the web UI. TLS is
   terminated by the ingress (`ingress.tls`) or in front of the cluster
   (Cloudflare, a load balancer).
@@ -82,6 +83,28 @@ lock. Keep `replicas × (api.dbMaxConnections + 2)` below Postgres
 The API and the flow worker are the same binary: restart them together when
 `latest` moves. A background task may be leased by either, and the old one keeps
 it (the System page lists each lease with its pod and version).
+
+## PostgreSQL extensions
+
+The cluster runs the CNPG **PostGIS** image (`postgres.imageName`, pinned by
+build date), which also ships pgvector and pg_trgm. The app user `pnex` is
+not a superuser, so the extensions of `postgres.extensions` (postgis,
+vector, pg_trgm) are created by the operator: `postInitApplicationSQL` on a
+new cluster, and a `Database` object (`<release>-pg-pnex`, reclaim policy
+`retain`) that keeps them present on an existing one. The server's
+migrations then find them already there.
+
+### Upgrading an existing cluster to the PostGIS image
+
+The server migration `geo_layers` needs PostGIS: change the database
+**before** deploying a server built after it.
+
+1. `helm upgrade` with the same values: the operator restarts Postgres on
+   the new image (a short outage with `instances: 1`), then creates the
+   extensions.
+2. Wait for `kubectl -n <ns> get cluster <release>-pg` to be healthy and for
+   `kubectl -n <ns> get database <release>-pg-pnex` to show `APPLIED true`.
+3. Only then deploy the new server image.
 
 ## Upgrading from 0.2.x
 

@@ -312,7 +312,13 @@ ollama:
 # ── PostgreSQL (CloudNativePG operator must be installed) ───────────────
 postgres:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  # CNPG PostGIS image, pinned by its build date: PostGIS (geo layers),
+  # pgvector and pg_trgm. Same major as before; Debian trixie, the pnex
+  # database collates in C so the libc change rebuilds no index.
+  imageName: ghcr.io/cloudnative-pg/postgis:18.7-3.7.0-202611131026-system-trixie
+  # Created by the operator's superuser (the app user `pnex` is not one),
+  # before the server's migrations look for them.
+  extensions: [postgis, vector, pg_trgm]
   size: 5Gi
   storageClass: ""
   parameters:
