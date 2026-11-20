@@ -100,7 +100,7 @@ spec:
             - { name: BUCKET, value: {{ .Values.rustfs.bucket | quote }} }
             - { name: ENDPOINT, value: "http://{{ $name }}:9000" }
             {{- if .Values.pipelineWorker.enabled }}
-            # The pipeline worker's own identity: datasets only, never media
+            # The pipeline worker's own identity: datasets and step staging only, never media
             # or documents (security.md SEC-61).
             - name: WORKER_ACCESS_KEY
               valueFrom:
@@ -127,9 +127,9 @@ spec:
               admin --data-binary @- "$ENDPOINT/rustfs/admin/v3/add-canned-policy?name=pnex-pipeline-worker" <<EOF
               {"Version":"2012-10-17","Statement":[
                 {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],
-                 "Resource":["arn:aws:s3:::$BUCKET/org_*/datasets/*"]},
+                 "Resource":["arn:aws:s3:::$BUCKET/org_*/datasets/*","arn:aws:s3:::$BUCKET/org_*/pipeline-steps/*"]},
                 {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::$BUCKET"],
-                 "Condition":{"StringLike":{"s3:prefix":["org_*/datasets/*"]}}}]}
+                 "Condition":{"StringLike":{"s3:prefix":["org_*/datasets/*","org_*/pipeline-steps/*"]}}}]}
               EOF
               printf '{"secretKey":"%s","status":"enabled"}' "$WORKER_SECRET_KEY" \
                 | admin --data-binary @- "$ENDPOINT/rustfs/admin/v3/add-user?accessKey=$WORKER_ACCESS_KEY"
