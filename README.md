@@ -196,7 +196,7 @@ certificates) and Docker volumes for the data. `pnexctl` goes to
 
 | Service | Image | Role |
 |---|---|---|
-| nginx | `nginx:1.29-alpine` | The only public entry point: TLS for browsers, apps and devices (ESP8266-compatible TLS fragment sizes). |
+| nginx | `nginx:1.30.7-alpine` | The only public entry point: TLS for browsers, apps and devices (ESP8266-compatible TLS fragment sizes). |
 | pki | `alpine:3.22` | One-shot: local root CA (10 years, created once) + server certificate (renewed automatically). |
 | pnex-server | `shanisma/pnex-server-rs` | API, websockets, web UI, flow runtime. Migrates the database at start. |
 | pnex-builder | `shanisma/pnex-builder-rs` | Job worker: firmware builds (PlatformIO) and 360° stitching. |

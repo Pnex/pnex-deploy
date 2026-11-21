@@ -422,7 +422,10 @@ deviceEdge:
   # Host compiled into firmware builds. Default: devices.<publicHost>.
   host: ""
   replicas: 1
-  image: nginxinc/nginx-unprivileged:1.29-alpine
+  # Chainguard free tier only publishes `latest`: pinned by digest (nginx 1.31.9).
+  image: cgr.dev/chainguard/nginx:latest@sha256:c1642395cc75f39c931d66d939f7e78cbdf671d6cfd821616632b0639c3c6d63
+  # Writes the edge secret into the nginx configuration (the nginx image has no shell).
+  renderImage: cgr.dev/chainguard/busybox:latest@sha256:9ea14a743061993ca9fbf5f5ad7215ede3646d142754398f456250e51c23175a
   service:
     type: LoadBalancer
     # On a single-node cluster whose LoadBalancer is the node itself (k3s

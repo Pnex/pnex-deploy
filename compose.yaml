@@ -279,7 +279,7 @@ services:
   # devices). nginx/OpenSSL honours the max_fragment_length extension the
   # ESP8266 needs (2 KB BearSSL receive buffer).
   nginx:
-    image: nginx:1.29-alpine
+    image: nginx:1.30.7-alpine
     restart: unless-stopped
     logging: *logging
     depends_on:

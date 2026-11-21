@@ -39,7 +39,7 @@ metadata:
   labels:
     {{- include "pnex.labels" . | nindent 4 }}
 data:
-  # Rendered by the nginx image entrypoint (envsubst of PNEX_* only).
+  # Rendered by the `render` init container (__PNEX_EDGE_SECRET__ only).
   default.conf.template: |
     map $http_upgrade $connection_upgrade {
         default upgrade;
@@ -69,7 +69,7 @@ data:
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
-        proxy_set_header X-Pnex-Edge ${PNEX_EDGE_SECRET};
+        proxy_set_header X-Pnex-Edge __PNEX_EDGE_SECRET__;
         # Certificate seen on this TLS link (URL-encoded PEM, empty without
         # one): always overwritten, a client can never inject its own value.
         proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
@@ -120,17 +120,28 @@ spec:
       {{- include "pnex.podSecurity" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 101
-        runAsGroup: 101
-      containers:
-        - name: nginx
-          image: {{ .Values.deviceEdge.image }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      initContainers:
+        - name: render
+          image: {{ .Values.deviceEdge.renderImage }}
           {{- include "pnex.containerSecurity" . | nindent 10 }}
           env:
             - name: PNEX_EDGE_SECRET
               valueFrom:
                 secretKeyRef: { name: {{ include "pnex.secretName" . }}, key: edge-secret }
-            - { name: NGINX_ENVSUBST_FILTER, value: "^PNEX_" }
+          # Shell substitution, not sed: the secret may hold sed metacharacters.
+          command:
+            - /bin/sh
+            - -c
+            - t=$(cat /templates/default.conf.template) && printf '%s\n' "${t//__PNEX_EDGE_SECRET__/$PNEX_EDGE_SECRET}" > /conf/default.conf
+          volumeMounts:
+            - { name: templates, mountPath: /templates, readOnly: true }
+            - { name: conf, mountPath: /conf }
+      containers:
+        - name: nginx
+          image: {{ .Values.deviceEdge.image }}
+          {{- include "pnex.containerSecurity" . | nindent 10 }}
           ports:
             - { name: https, containerPort: 8443 }
           readinessProbe:
@@ -142,12 +153,16 @@ spec:
           resources:
             {{- toYaml .Values.deviceEdge.resources | nindent 12 }}
           volumeMounts:
-            - { name: templates, mountPath: /etc/nginx/templates, readOnly: true }
+            # Replaces the image's conf.d (its default server listens on 8080).
+            - { name: conf, mountPath: /etc/nginx/conf.d, readOnly: true }
             - { name: tls, mountPath: /pki, readOnly: true }
       volumes:
         - name: templates
           configMap:
             name: {{ $name }}
+        - name: conf
+          emptyDir:
+            medium: Memory
         - name: tls
           secret:
             secretName: {{ $tlsSecret }}
